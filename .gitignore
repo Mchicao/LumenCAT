@@ -1,0 +1,8 @@
+/.cache/
+/target/
+/output/
+/logs/
+*.db
+*.db-wal
+*.db-shm
+*.lock-session

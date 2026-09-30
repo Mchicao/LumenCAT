@@ -1,0 +1,62 @@
+mod app;
+mod worker;
+
+fn main() -> eframe::Result {
+    let log_root = std::env::var_os("LOCALAPPDATA")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+        .join("LumenCAT/logs/app");
+    if let Err(error) = initialize_logging(&log_root) {
+        // El diagnóstico no debe impedir abrir el trabajo ni imprimir contenido del documento.
+        eprintln!("No se pudo inicializar el registro local: {error}");
+    }
+    tracing::info!(
+        event = "application_start",
+        version = env!("CARGO_PKG_VERSION")
+    );
+    let mut args = std::env::args().skip(1);
+    let project = if args.next().as_deref() == Some("--project") {
+        args.next()
+    } else {
+        None
+    };
+    let options = eframe::NativeOptions {
+        viewport: eframe::egui::ViewportBuilder::default()
+            .with_inner_size([1400.0, 900.0])
+            .with_min_inner_size([980.0, 640.0]),
+        ..Default::default()
+    };
+    eframe::run_native(
+        "LumenCAT · traducción bajo tu control",
+        options,
+        Box::new(move |cc| Ok(Box::new(app::CatApp::new(cc, project)))),
+    )
+}
+
+fn initialize_logging(
+    directory: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    std::fs::create_dir_all(directory)?;
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs();
+    let file = std::fs::File::options()
+        .write(true)
+        .create_new(true)
+        .open(directory.join(format!("{timestamp}-{}.jsonl", std::process::id())))?;
+    tracing_subscriber::fmt()
+        .json()
+        .with_ansi(false)
+        .with_writer(file)
+        .with_max_level(
+            if std::env::var_os("LUMENCAT_DIAGNOSTICS").as_deref()
+                == Some(std::ffi::OsStr::new("1"))
+            {
+                tracing::Level::DEBUG
+            } else {
+                tracing::Level::INFO
+            },
+        )
+        .try_init()?;
+    Ok(())
+}

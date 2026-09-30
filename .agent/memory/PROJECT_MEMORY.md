@@ -1,0 +1,15 @@
+# Estado del proyecto — 2026-09-30
+
+Repo nuevo C:/Proyectos/LumenCAT, nombre provisional. Usuario autorizó trabajo autónomo y actualizaciones de herramientas si benefician espacio/eficiencia; no commits/push/deploy ni destrucción. Word/DOCX prioridad alta: adelantado a primer slice con subset explícito y preservación OOXML. No browser/computer use autorizado.
+
+Dos investigadores GPT-6 Luna high cubrieron CAT y estándares, fuentes en docs/technical/INVESTIGACION.md. OpenCode GLM5.3 max plan/read-only para revisión adversarial. Ownership implementación: formats.rs/tests formatos, storage.rs/tm.rs/tests storage, formats/docx.rs/tests docx, app/worker/main independientes. Root QA, integración, benchmark y docs.
+
+Rust1.97, OpenCode1.18.33 disponibles. Impeccable actualizado por solicitud a 4.3.1 en Claude/Gemini/OpenCode según instalador; vínculo .agent requiere fuente, Codex skill instalada no reescrita. No se ejecutó actualización git del vínculo. Profiles dev/test debug0 incremental=false para reducir artefactos; target .cache/target, no tocar cachés globales.
+
+Estado primera entrega: Rust/egui nativo, TXT/XLIFF1.2 textual y DOCX conservador; SQLite WAL FULL, autosave250–500ms y ack/revision, undo/redo persistidos, TMX import/export streaming, exact/fuzzy/concordance y search cancelable, QA en worker, lista virtualizada/cache1024. Sin red/IA. DOCX ahora concatena varios w:t/runs solo con formato idéntico y preserva el esqueleto; formato mixto/códigos, stories secundarias y Word real siguen pendientes. Validación del incremento: test de round-trip mismo formato agregado. No hay corpus real/fuzzing todavía; no declarar MVP profesional completo.
+
+Tres reviews GLM5.3max completadas después de una arquitectónica incompleta por ámbito de lectura externo. Findings tratados en docs/technical/REVISIONES.md. Mejoras medidas: rare candidates+CROSS JOIN; contador frecuencias512 evita escaneo postings común. Bench final3M fuzzy p951.274ms, exact0.028ms, concordance0.160ms, commit2.208ms; synthetic recall1 caso top8, no garantía exhaustiva/CJK. 1M fuzzy0.946ms; import79.2s. CSV finales output, fixtureDB temporales eliminados automáticamente.
+
+Validación final scripts/utils/validate.ps1 -Release exit0: fmt, clippy -Dwarnings,21 tests/build. Pruebas kill-process/transacción incompleta, cancel scan, raw metadata TMX, XLIFF status, Unicode/OOXML/CRC/ZIP/OPC, stale ack y draft recovery. Logs en logs/tests/validation-final.log. EXE output/lumencat.exe7836160bytes SHA25689A3229FF68286587DF93C5301BF3FB9554EF95429E4DCD1210FE5362DE5EA9B. Benchmark.exe también entregado. Rust no actualizado: ya1.97. cargo clean SOLO target verificado .cache/target retiró1.72GB; repo≈11.4MB incluyendo EXEs/logs/CSV. Rebuild locked desde Cargo.lock.
+
+Git inicializado main sin commits/remotos; sin push/deploy. Próxima tarea recomendada: autorización de pruebas visuales Word/GUI + corpus DOCX real, diseño tags/runs y migraciones backup antes de ampliar soporte. Guía docs/guides/INICIO.md y plan vigente. Documentos/outputs originales nunca overwrite, backups coherentes activos aún no implementados.

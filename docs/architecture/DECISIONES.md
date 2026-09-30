@@ -38,7 +38,17 @@ DOCX básico pasa a M1. [ECMA-376](https://ecma-international.org/publications-a
 
 ## 010 — Runs Word repetidos con formato idéntico
 
-En el parser DOCX, los `w:t` de un párrafo se concatenan solo si cada `w:r` tiene el mismo XML `w:rPr` (comparación conservadora byte a byte). La exportación pone el target en el primer nodo de texto y elimina los restantes; el formato se mantiene porque los runs aceptados comparten propiedades. Cualquier diferencia, elemento inline desconocido, campo o salto se rechaza. Esto cubre fragmentación de texto del mismo estilo; no implementa códigos protegidos ni compatibilidad de formato mixto. Ver `docs/technical/DOCX_WORD_RESEARCH.md` y prueba de round-trip.
+En el parser DOCX, los `w:t` de un párrafo se concatenan solo si cada `w:r` tiene el mismo XML `w:rPr` (comparación conservadora byte a byte). Extendido por la decisión 011: hoy los runs contiguos con `w:rPr` idéntico forman regiones y las fronteras de estilo se exponen como códigos protegidos en lugar de rechazarse. Ver `docs/technical/DOCX_WORD_RESEARCH.md` y prueba de round-trip.
+
+## 011 — Regiones de formato e imágenes Word con códigos protegidos
+
+El segmento DOCX sigue siendo el párrafo, pero los runs contiguos con `w:rPr` byte-idéntico se agrupan en **regiones**. La primera región del párrafo define el estilo base y su texto se muestra sin códigos; cada región con estilo distinto se expone como par `<g id="k">…</g>` (ids 1..n por párrafo, sin anidar). Los runs exclusivamente gráficos (`w:drawing` con una imagen estática embebida) se representan como `<x id="k"/>` y se copian byte a byte en la exportación; sus `w:rPr` no alteran el formato del texto vecino. El editor protegido existente (`src/editing.rs`, `insert_next_tag`) opera sobre estos códigos sin cambios.
+
+La exportación exige: todos los códigos del original presentes exactamente una vez (sin duplicar, anidar ni códigos desconocidos), texto no vacío en cada región, y un round-trip propio que compara texto plano + multiset de `<x/>` + conteo de `<g>` (tolerante al reordenado del texto alrededor de códigos). La reconstrucción emite un `w:r` por fragmento de texto con el `w:rPr` original de su región; se pierden atributos `w:rsid*` de los runs reescritos, sin efecto en Word.
+
+Solo se aceptan imágenes estáticas embebidas: dentro de `w:drawing` se permiten prefijos `wp/a/pic/a14/a16/wp14`, todo `graphicData` debe ser `picture`, se rechaza texto (`w:*`, `a:t`, `txbxContent`), gráficos, SmartArt, VML (`w:pict`), `mc:AlternateContent` y `r:embed` sin relación de imagen válida en `word/_rels/document.xml.rels`. Límites declarados: marcado entre los runs de un párrafo (bookmarks intercalados), runs con texto e imagen juntos, `w:tab`/`w:br`/`w:cr`, hyperlinks, campos, revisiones, content controls, historias con texto fuera de `word/document.xml` y Strict OOXML siguen rechazados con mensaje explícito. Un DOCX sin texto traducible (solo imágenes) importa con cero segmentos y exporta idéntico.
+
+Evidencia con Word real 16.0.20326: `word-inspection.docx` (tablas con celdas combinadas, tres imágenes inline, formato mixto), `mammoth-underline.docx` (formato mixto) y `mammoth-tiny-picture.docx` (solo imagen) traducen, exportan y reabren con tablas/celdas/anchos, dimensiones de imágenes, secciones, páginas y párrafos idénticos; el render PDF compara malla de tinta por página (las imágenes se reflow-ean con el texto más largo, sin pérdida). Ver `docs/technical/CONTINUACION_DOCX.md`.
 
 ## 008 — Espacio de compilación
 

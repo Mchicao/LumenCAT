@@ -1,5 +1,7 @@
-//! DOCX Transitional conservador: reúne texto entre runs con formato idéntico;
-//! el paquete original esqueleto evita volver a serializar partes ajenas.
+//! DOCX Transitional conservador: un segmento por párrafo; runs contiguos con el
+//! mismo `w:rPr` forman regiones y las fronteras de estilo o imágenes inline se
+//! exponen como códigos protegidos `<g>`/`<x/>`. El paquete original esqueleto
+//! evita volver a serializar partes ajenas.
 use crate::model::{
     Cancellation, CatError, DocumentFormat, ImportedDocument, ImportedSegment, Result, SegmentState,
 };
@@ -16,6 +18,8 @@ use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
 const MAIN: &str = "word/document.xml";
 const W_NS: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+const PICTURE_URI: &str = "http://schemas.openxmlformats.org/drawingml/2006/picture";
+const IMAGE_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
 const MAX_PART: u64 = 32 * 1024 * 1024;
 const MAX_TOTAL: u64 = 128 * 1024 * 1024;
 
@@ -125,16 +129,6 @@ fn validate_xml(bytes: &[u8]) -> Result<()> {
         return Err(invalid("XML DOCX incompleto o múltiples raíces"));
     }
     Ok(())
-}
-
-struct TextSlot {
-    start: usize,
-    end: usize,
-}
-
-struct ParagraphSlot {
-    texts: Vec<TextSlot>,
-    text: String,
 }
 
 fn validate_opc_namespace(text: &str, relationships: bool) -> Result<()> {
@@ -247,25 +241,191 @@ fn validate_relationship_targets(name: &str, text: &str, parts: &HashSet<String>
     }
     Ok(())
 }
-fn text_slots(xml: &[u8], cancel: &Cancellation) -> Result<Vec<ParagraphSlot>> {
+
+fn split_name(name: &[u8]) -> (&[u8], &[u8]) {
+    match name.iter().position(|&b| b == b':') {
+        Some(position) => {
+            let (prefix, rest) = name.split_at(position);
+            (prefix, &rest[1..])
+        }
+        None => (b"", name),
+    }
+}
+
+fn is_xml_space(bytes: &[u8]) -> bool {
+    bytes
+        .iter()
+        .all(|b| matches!(b, b' ' | b'\t' | b'\r' | b'\n'))
+}
+
+/// Solo se admite un `w:drawing` que sea imagen estática embebida: prefijos
+/// permitidos, sin texto Word/DrawingML, todo `graphicData` de tipo picture y
+/// cada `r:embed` con relación de imagen válida en el paquete.
+fn validate_drawing(bytes: &[u8], image_rels: &HashSet<String>) -> Result<()> {
+    let text = std::str::from_utf8(bytes).map_err(|_| invalid("Imagen Word no UTF-8"))?;
+    let mut reader = Reader::from_str(text);
+    let mut pictures = 0_usize;
+    let mut first = true;
+    loop {
+        let event = reader.read_event().map_err(|e| invalid(e.to_string()))?;
+        match &event {
+            Event::Start(e) => {
+                if first {
+                    first = false;
+                    if e.name().as_ref() != b"w:drawing" {
+                        return Err(invalid("Estructura de imagen Word inválida"));
+                    }
+                    continue;
+                }
+                check_drawing_element(e, image_rels, &mut pictures)?;
+            }
+            Event::Empty(e) => {
+                if first {
+                    return Err(invalid("Dibujo Word vacío no soportado"));
+                }
+                check_drawing_element(e, image_rels, &mut pictures)?;
+            }
+            Event::Text(t) => {
+                let value = t.decode().map_err(|e| invalid(e.to_string()))?;
+                if !value.trim().is_empty() {
+                    return Err(invalid("Texto dentro de imagen Word no soportado"));
+                }
+            }
+            Event::GeneralRef(reference) => {
+                if let Some(decoded) = super::text_event(&Event::GeneralRef(reference.clone()))?
+                    && !decoded.trim().is_empty()
+                {
+                    return Err(invalid("Texto dentro de imagen Word no soportado"));
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    if pictures == 0 {
+        return Err(invalid("Dibujo Word sin imagen estática embebida"));
+    }
+    Ok(())
+}
+
+fn check_drawing_element(
+    element: &BytesStart<'_>,
+    image_rels: &HashSet<String>,
+    pictures: &mut usize,
+) -> Result<()> {
+    let name = element.name();
+    let (prefix, local) = split_name(name.as_ref());
+    if !matches!(prefix, b"wp" | b"a" | b"pic" | b"a14" | b"a16" | b"wp14") {
+        return Err(invalid(
+            "Contenido dentro de imagen Word no soportado (cuadro de texto, gráfico, SmartArt, forma o extensión desconocida)",
+        ));
+    }
+    if matches!(local, b"t" | b"tspan" | b"tx" | b"txbx" | b"txbxContent") {
+        return Err(invalid("Texto dentro de imagen Word no soportado"));
+    }
+    if local == b"graphicData" {
+        if attr(element, b"uri")?.as_deref() != Some(PICTURE_URI) {
+            return Err(invalid(
+                "Gráfico, SmartArt u objeto no imagen dentro de Word no soportado",
+            ));
+        }
+        *pictures += 1;
+    }
+    for attribute in element.attributes() {
+        let attribute = attribute.map_err(|e| invalid(e.to_string()))?;
+        if attribute.key.as_ref() == b"r:embed" {
+            let id = attribute
+                .unescape_value()
+                .map_err(|e| invalid(e.to_string()))?;
+            if !image_rels.contains(id.as_ref()) {
+                return Err(invalid(
+                    "Imagen Word sin relación de imagen válida en el paquete",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Grupo de runs contiguos con `w:rPr` idéntico; `rpr` son los bytes exactos
+/// del elemento `w:rPr` representativo (None si el run no lo tiene).
+struct Region {
+    rpr: Option<Vec<u8>>,
+    text: String,
+    span: (usize, usize),
+}
+
+enum FlowNode {
+    Region(usize),
+    Graphic(usize),
+}
+
+struct ParagraphSlot {
+    /// Source del párrafo con códigos protegidos `<g id>`/`<x id/>`.
+    text: String,
+    /// Span del contenido del párrafo: tras `<w:p ...>` y antes de `</w:p>`.
+    content: (usize, usize),
+    first: usize,
+    last_end: usize,
+    flow: Vec<FlowNode>,
+    regions: Vec<Region>,
+    /// Spans de runs completos que contienen `w:drawing`.
+    graphics: Vec<(usize, usize)>,
+    /// Índices de regiones con código `<g>`; el id es la posición + 1.
+    g_ids: Vec<usize>,
+}
+
+fn text_slots(
+    xml: &[u8],
+    image_rels: &HashSet<String>,
+    cancel: &Cancellation,
+) -> Result<Vec<ParagraphSlot>> {
     let text = std::str::from_utf8(xml).map_err(|e| invalid(e.to_string()))?;
     let mut reader = Reader::from_str(text);
     let mut slots = Vec::new();
     let mut paragraph = false;
-    let mut paragraph_text = String::new();
-    let mut paragraph_texts = Vec::new();
-    let mut paragraph_run_style: Option<Vec<u8>> = None;
+    let mut paragraph_content = 0_usize;
+    let mut flow: Vec<FlowNode> = Vec::new();
+    let mut regions: Vec<Region> = Vec::new();
+    let mut graphics: Vec<(usize, usize)> = Vec::new();
+    let mut last_node_end = 0_usize;
+    let mut run_start = 0_usize;
     let mut run_style: Option<Vec<u8>> = None;
     let mut run_style_start = None;
     let mut run_has_style = false;
     let mut run_has_text = false;
-    let mut active: Option<(usize, String)> = None;
+    let mut run_has_drawing = false;
+    let mut run_text = String::new();
+    let mut active: Option<String> = None;
     let mut root = false;
     let mut stack: Vec<Vec<u8>> = Vec::new();
+    // Al entrar en un w:drawing se saltan las validaciones generales y su span
+    // se valida como imagen estática al cerrar.
+    let mut drawing: Option<(usize, usize)> = None;
     loop {
         cancel.check()?;
         let before = reader.buffer_position() as usize;
         let event = reader.read_event().map_err(|e| invalid(e.to_string()))?;
+        if let Some((start, depth)) = drawing.as_mut() {
+            match &event {
+                Event::Start(element) => {
+                    stack.push(element.name().as_ref().to_vec());
+                    *depth += 1;
+                }
+                Event::End(_) => {
+                    stack.pop();
+                    *depth -= 1;
+                    if *depth == 0 {
+                        let span = (*start, reader.buffer_position() as usize);
+                        validate_drawing(&text.as_bytes()[span.0..span.1], image_rels)?;
+                        drawing = None;
+                        run_has_drawing = true;
+                    }
+                }
+                _ => {}
+            }
+            continue;
+        }
         match event {
             Event::Start(ref element) | Event::Empty(ref element) => {
                 let name = element.name();
@@ -286,7 +446,7 @@ fn text_slots(xml: &[u8], cancel: &Cancellation) -> Result<Vec<ParagraphSlot>> {
                         "Namespaces o contenido Word alternativo no soportados",
                     ));
                 }
-                let local = name.split(|&b| b == b':').next_back().unwrap_or(name);
+                let local = split_name(name).1;
                 if matches!(
                     local,
                     b"hyperlink"
@@ -299,7 +459,6 @@ fn text_slots(xml: &[u8], cancel: &Cancellation) -> Result<Vec<ParagraphSlot>> {
                         | b"moveTo"
                         | b"sdt"
                         | b"txbxContent"
-                        | b"drawing"
                         | b"pict"
                         | b"object"
                         | b"altChunk"
@@ -321,6 +480,18 @@ fn text_slots(xml: &[u8], cancel: &Cancellation) -> Result<Vec<ParagraphSlot>> {
                 if active.is_some() {
                     return Err(invalid("Marcado anidado dentro de texto Word"));
                 }
+                if name == b"w:drawing" {
+                    if stack.last().map(Vec::as_slice) != Some(b"w:r")
+                        || matches!(event, Event::Empty(_))
+                    {
+                        return Err(invalid(
+                            "Imagen Word fuera de un run de texto o vacía no soportada",
+                        ));
+                    }
+                    stack.push(name.to_vec());
+                    drawing = Some((before, 1));
+                    continue;
+                }
                 if stack.last().map(Vec::as_slice) == Some(b"w:r")
                     && !matches!(name, b"w:rPr" | b"w:t")
                 {
@@ -335,23 +506,31 @@ fn text_slots(xml: &[u8], cancel: &Cancellation) -> Result<Vec<ParagraphSlot>> {
                     {
                         return Err(invalid("Párrafos Word anidados"));
                     }
-                    paragraph = true;
-                    paragraph_text.clear();
-                    paragraph_texts.clear();
-                    paragraph_run_style = None;
+                    if matches!(event, Event::Start(_)) {
+                        paragraph = true;
+                        paragraph_content = reader.buffer_position() as usize;
+                        flow = Vec::new();
+                        regions = Vec::new();
+                        graphics = Vec::new();
+                        last_node_end = 0;
+                    }
                 } else if name == b"w:r" {
                     if !paragraph || stack.last().map(Vec::as_slice) != Some(b"w:p") {
                         return Err(invalid("Run Word fuera de un párrafo simple"));
                     }
+                    run_start = before;
                     run_style = None;
+                    run_style_start = None;
                     run_has_style = false;
                     run_has_text = false;
+                    run_has_drawing = false;
                 } else if name == b"w:rPr" && stack.last().map(Vec::as_slice) == Some(b"w:pPr") {
-                    // Paragraph-mark formatting does not affect the text runs.
+                    // El formato de la marca de párrafo no afecta a los runs.
                 } else if name == b"w:rPr" {
                     if stack.last().map(Vec::as_slice) != Some(b"w:r")
                         || run_has_style
                         || run_has_text
+                        || run_has_drawing
                     {
                         return Err(invalid(
                             "Propiedades de run Word duplicadas o fuera de lugar",
@@ -381,10 +560,7 @@ fn text_slots(xml: &[u8], cancel: &Cancellation) -> Result<Vec<ParagraphSlot>> {
                             return Err(invalid("Atributo w:t no soportado"));
                         }
                     }
-                    active = Some((before, String::new()));
-                }
-                if matches!(event, Event::Empty(_)) && name == b"w:p" {
-                    paragraph = false;
+                    active = Some(String::new());
                 }
                 if matches!(event, Event::Start(_)) {
                     stack.push(name.to_vec());
@@ -398,19 +574,8 @@ fn text_slots(xml: &[u8], cancel: &Cancellation) -> Result<Vec<ParagraphSlot>> {
                             text.as_bytes()[start..reader.buffer_position() as usize].to_vec(),
                         );
                     }
-                } else if name.as_ref() == b"w:r" {
-                    let style = run_style.take().unwrap_or_default();
-                    if paragraph_run_style
-                        .as_ref()
-                        .is_some_and(|expected| expected != &style)
-                    {
-                        return Err(invalid(
-                            "Párrafo con formato mixto entre runs: tags protegidos aún no soportados",
-                        ));
-                    }
-                    paragraph_run_style.get_or_insert(style);
                 } else if name.as_ref() == b"w:t" {
-                    let (start, value) = active
+                    let value = active
                         .take()
                         .ok_or_else(|| invalid("Texto Word sin apertura"))?;
                     if value.is_empty() || value.chars().any(|c| !super::xml_char(c)) {
@@ -423,29 +588,97 @@ fn text_slots(xml: &[u8], cancel: &Cancellation) -> Result<Vec<ParagraphSlot>> {
                             "Texto DOCX con saltos de línea o tabulaciones no soportado; requieren tags Word protegidos",
                         ));
                     }
-                    paragraph_text.push_str(&value);
-                    paragraph_texts.push(TextSlot {
-                        start,
-                        end: reader.buffer_position() as usize,
-                    });
-                }
-                stack.pop();
-                if name.as_ref() == b"w:p" {
+                    run_text.push_str(&value);
+                } else if name.as_ref() == b"w:r" {
+                    if run_has_text && run_has_drawing {
+                        return Err(invalid(
+                            "Run Word con texto e imagen juntos no soportado todavía",
+                        ));
+                    }
+                    let run_end = reader.buffer_position() as usize;
+                    if run_has_text {
+                        if last_node_end == run_start
+                            && let Some(FlowNode::Region(index)) = flow.last()
+                            && regions[*index].rpr == run_style
+                        {
+                            let index = *index;
+                            regions[index].text.push_str(&run_text);
+                            regions[index].span.1 = run_end;
+                        } else {
+                            regions.push(Region {
+                                rpr: run_style.take(),
+                                text: std::mem::take(&mut run_text),
+                                span: (run_start, run_end),
+                            });
+                            flow.push(FlowNode::Region(regions.len() - 1));
+                        }
+                        last_node_end = run_end;
+                    } else if run_has_drawing {
+                        graphics.push((run_start, run_end));
+                        flow.push(FlowNode::Graphic(graphics.len() - 1));
+                        last_node_end = run_end;
+                    }
+                    run_text.clear();
+                    run_has_text = false;
+                    run_has_drawing = false;
+                    run_has_style = false;
+                } else if name.as_ref() == b"w:p" {
                     paragraph = false;
-                    if !paragraph_texts.is_empty() {
+                    if !regions.is_empty() {
+                        let paragraph_end = before;
+                        let spans: Vec<(usize, usize)> = flow
+                            .iter()
+                            .map(|node| match node {
+                                FlowNode::Region(index) => regions[*index].span,
+                                FlowNode::Graphic(index) => graphics[*index],
+                            })
+                            .collect();
+                        for pair in spans.windows(2) {
+                            if !is_xml_space(&text.as_bytes()[pair[0].1..pair[1].0]) {
+                                return Err(invalid(
+                                    "Marcado entre los runs de un párrafo Word no soportado; el original se conserva",
+                                ));
+                            }
+                        }
+                        let mut g_ids = Vec::new();
+                        let mut text = String::new();
+                        for node in &flow {
+                            match node {
+                                FlowNode::Graphic(index) => {
+                                    text.push_str(&format!("<x id=\"{}\"/>", index + 1));
+                                }
+                                FlowNode::Region(index) => {
+                                    if regions[*index].rpr == regions[0].rpr {
+                                        text.push_str(&regions[*index].text);
+                                    } else {
+                                        text.push_str(&format!("<g id=\"{}\">", g_ids.len() + 1));
+                                        text.push_str(&regions[*index].text);
+                                        text.push_str("</g>");
+                                        g_ids.push(*index);
+                                    }
+                                }
+                            }
+                        }
                         slots.push(ParagraphSlot {
-                            texts: std::mem::take(&mut paragraph_texts),
-                            text: std::mem::take(&mut paragraph_text),
+                            text,
+                            content: (paragraph_content, paragraph_end),
+                            first: spans.first().map_or(paragraph_content, |s| s.0),
+                            last_end: spans.last().map_or(paragraph_content, |s| s.1),
+                            flow: std::mem::take(&mut flow),
+                            regions: std::mem::take(&mut regions),
+                            graphics: std::mem::take(&mut graphics),
+                            g_ids,
                         });
                     }
                 }
+                stack.pop();
             }
             Event::CData(_) => return Err(invalid("CDATA Word no soportado")),
             Event::Comment(_) | Event::PI(_) if active.is_some() => {
                 return Err(invalid("Marcado dentro de texto Word no soportado"));
             }
             Event::Text(t) => {
-                if let Some((_, value)) = active.as_mut() {
+                if let Some(value) = active.as_mut() {
                     if let Some(decoded) = super::text_event(&Event::Text(t))? {
                         value.push_str(&decoded);
                     }
@@ -460,7 +693,7 @@ fn text_slots(xml: &[u8], cancel: &Cancellation) -> Result<Vec<ParagraphSlot>> {
             }
             Event::GeneralRef(reference) if active.is_some() => {
                 if let Some(decoded) = super::text_event(&Event::GeneralRef(reference))?
-                    && let Some((_, value)) = active.as_mut()
+                    && let Some(value) = active.as_mut()
                 {
                     value.push_str(&decoded);
                 }
@@ -468,9 +701,6 @@ fn text_slots(xml: &[u8], cancel: &Cancellation) -> Result<Vec<ParagraphSlot>> {
             Event::Eof => break,
             _ => {}
         }
-    }
-    if slots.is_empty() {
-        return Err(invalid("DOCX sin párrafos traducibles"));
     }
     Ok(slots)
 }
@@ -505,6 +735,7 @@ fn inspect(bytes: &[u8], cancel: &Cancellation) -> Result<Vec<ParagraphSlot>> {
     let mut main = None;
     let mut content_type = false;
     let mut office_relationship = false;
+    let mut image_rels = HashSet::new();
     for i in 0..archive.len() {
         cancel.check()?;
         let mut part = archive.by_index(i).map_err(zip_error)?;
@@ -554,6 +785,9 @@ fn inspect(bytes: &[u8], cancel: &Cancellation) -> Result<Vec<ParagraphSlot>> {
             }
             if lower_name.ends_with(".rels") {
                 validate_relationship_targets(&name, text, &parts)?;
+                if name == "word/_rels/document.xml.rels" {
+                    collect_image_relationships(text, &mut image_rels)?;
+                }
             }
             if name == "[Content_Types].xml" || name == "_rels/.rels" {
                 let mut reader = Reader::from_str(text);
@@ -629,8 +863,30 @@ fn inspect(bytes: &[u8], cancel: &Cancellation) -> Result<Vec<ParagraphSlot>> {
     }
     text_slots(
         &main.ok_or_else(|| invalid("DOCX sin word/document.xml"))?,
+        &image_rels,
         cancel,
     )
+}
+
+fn collect_image_relationships(text: &str, image_rels: &mut HashSet<String>) -> Result<()> {
+    let mut reader = Reader::from_str(text);
+    loop {
+        match reader
+            .read_event()
+            .map_err(|error| invalid(error.to_string()))?
+        {
+            Event::Start(e) | Event::Empty(e) if e.name().as_ref() == b"Relationship" => {
+                if attr(&e, b"Type")?.as_deref() == Some(IMAGE_REL)
+                    && let Some(id) = attr(&e, b"Id")?
+                {
+                    image_rels.insert(id);
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 pub fn import_docx(
@@ -673,6 +929,198 @@ pub fn import_docx(
             })
             .collect(),
     })
+}
+
+enum TargetPart {
+    Text(String),
+    GOpen(usize),
+    GClose,
+    X(usize),
+}
+
+/// Divide un target en texto plano y códigos `<g id="N">`, `</g>`, `<x id="N"/>`.
+/// Cualquier otra forma de tag es un error: solo los códigos que el importador
+/// generó pueden volver al documento.
+fn target_parts(target: &str) -> Result<Vec<TargetPart>> {
+    let mut parts = Vec::new();
+    for (piece, is_tag) in crate::editing::parts(target) {
+        if !is_tag {
+            if !piece.is_empty() {
+                parts.push(TargetPart::Text(piece.to_owned()));
+            }
+        } else if piece == "</g>" {
+            parts.push(TargetPart::GClose);
+        } else if let Some(id) = piece
+            .strip_prefix("<g id=\"")
+            .and_then(|rest| rest.strip_suffix("\">"))
+        {
+            parts.push(TargetPart::GOpen(id.parse().map_err(|_| {
+                invalid("código <g> inválido en la traducción DOCX")
+            })?));
+        } else if let Some(id) = piece
+            .strip_prefix("<x id=\"")
+            .and_then(|rest| rest.strip_suffix("\"/>"))
+        {
+            parts.push(TargetPart::X(id.parse().map_err(|_| {
+                invalid("código <x/> inválido en la traducción DOCX")
+            })?));
+        } else {
+            return Err(invalid(
+                "código inline no reconocido en la traducción DOCX; use los códigos del original",
+            ));
+        }
+    }
+    Ok(parts)
+}
+
+fn emit_run(output: &mut String, rpr: Option<&[u8]>, text: &str) -> Result<()> {
+    if text.is_empty() {
+        return Ok(());
+    }
+    output.push_str("<w:r>");
+    if let Some(bytes) = rpr {
+        output.push_str(std::str::from_utf8(bytes).map_err(|_| invalid("rPr Word no UTF-8"))?);
+    }
+    output.push_str("<w:t xml:space=\"preserve\">");
+    output.push_str(&super::escaped(text)?);
+    output.push_str("</w:t></w:r>");
+    Ok(())
+}
+
+fn flush_target_text(
+    output: &mut String,
+    pending: &mut String,
+    context: Option<usize>,
+    slot: &ParagraphSlot,
+    base: usize,
+    buckets: &mut [String],
+) -> Result<()> {
+    if pending.is_empty() {
+        return Ok(());
+    }
+    let rpr = match context {
+        None => slot.regions[base].rpr.as_deref(),
+        Some(id) => slot.regions[slot.g_ids[id - 1]].rpr.as_deref(),
+    };
+    emit_run(output, rpr, pending)?;
+    buckets[context.unwrap_or(0)].push_str(pending);
+    pending.clear();
+    Ok(())
+}
+
+/// Reconstruye el contenido de un párrafo desde el target con códigos: el texto
+/// va a runs con el `w:rPr` de su región, los `<x/>` copian el run gráfico
+/// original byte a byte. Exige todos los códigos presentes, sin duplicar y con
+/// texto en cada región.
+fn rebuild_paragraph(
+    xml: &str,
+    slot: &ParagraphSlot,
+    target: &str,
+    cancel: &Cancellation,
+) -> Result<String> {
+    cancel.check()?;
+    let parts = target_parts(target)?;
+    let base = slot
+        .flow
+        .iter()
+        .find_map(|node| match node {
+            FlowNode::Region(index) => Some(*index),
+            FlowNode::Graphic(_) => None,
+        })
+        .unwrap_or(0);
+    let mut open: Option<usize> = None;
+    let mut seen_g = vec![false; slot.g_ids.len()];
+    let mut seen_x = vec![false; slot.graphics.len()];
+    let mut buckets = vec![String::new(); slot.g_ids.len() + 1];
+    let mut pending = String::new();
+    let mut output = String::new();
+    output.push_str(&xml[slot.content.0..slot.first]);
+    for part in parts {
+        cancel.check()?;
+        match part {
+            TargetPart::Text(text) => pending.push_str(&text),
+            TargetPart::GOpen(id) => {
+                if open.is_some() {
+                    return Err(invalid(
+                        "códigos <g> anidados no permitidos en la traducción DOCX",
+                    ));
+                }
+                if id == 0 || id > slot.g_ids.len() {
+                    return Err(invalid("código <g> desconocido en la traducción DOCX"));
+                }
+                if seen_g[id - 1] {
+                    return Err(invalid("código <g> duplicado en la traducción DOCX"));
+                }
+                seen_g[id - 1] = true;
+                flush_target_text(&mut output, &mut pending, open, slot, base, &mut buckets)?;
+                open = Some(id);
+            }
+            TargetPart::GClose => {
+                let id = open
+                    .take()
+                    .ok_or_else(|| invalid("cierre </g> sin apertura en la traducción DOCX"))?;
+                flush_target_text(
+                    &mut output,
+                    &mut pending,
+                    Some(id),
+                    slot,
+                    base,
+                    &mut buckets,
+                )?;
+            }
+            TargetPart::X(id) => {
+                if id == 0 || id > slot.graphics.len() {
+                    return Err(invalid("código <x/> desconocido en la traducción DOCX"));
+                }
+                if seen_x[id - 1] {
+                    return Err(invalid("código <x/> duplicado en la traducción DOCX"));
+                }
+                seen_x[id - 1] = true;
+                flush_target_text(&mut output, &mut pending, open, slot, base, &mut buckets)?;
+                let (start, end) = slot.graphics[id - 1];
+                output.push_str(&xml[start..end]);
+            }
+        }
+    }
+    flush_target_text(&mut output, &mut pending, open, slot, base, &mut buckets)?;
+    output.push_str(&xml[slot.last_end..slot.content.1]);
+    if open.is_some() {
+        return Err(invalid("código <g> sin cerrar en la traducción DOCX"));
+    }
+    if seen_g.iter().any(|seen| !seen) {
+        return Err(invalid(
+            "traducción DOCX sin todos los códigos <g> del original",
+        ));
+    }
+    if seen_x.iter().any(|seen| !seen) {
+        return Err(invalid(
+            "traducción DOCX sin todos los códigos <x/> del original",
+        ));
+    }
+    if buckets.iter().any(|bucket| bucket.is_empty()) {
+        return Err(invalid(
+            "traducción DOCX con región de formato sin texto; traduzca cada fragmento",
+        ));
+    }
+    Ok(output)
+}
+
+/// Texto plano y códigos de un segmento, para una verificación de round-trip
+/// tolerante al reordenado del texto alrededor de los códigos.
+fn plain_codes(text: &str) -> (String, Vec<&str>, usize) {
+    let mut plain = String::new();
+    let mut x_codes = Vec::new();
+    let mut g_opens = 0;
+    for (piece, is_tag) in crate::editing::parts(text) {
+        if !is_tag {
+            plain.push_str(piece);
+        } else if let Some(code) = piece.strip_prefix("<x") {
+            x_codes.push(code);
+        } else if piece.starts_with("<g") {
+            g_opens += 1;
+        }
+    }
+    (plain, x_codes, g_opens)
 }
 
 pub fn serialize_docx(
@@ -718,20 +1166,14 @@ pub fn serialize_docx(
         let mut xml = String::new();
         part.read_to_string(&mut xml)?;
         let mut output = String::with_capacity(xml.len());
-        let mut offset = 0;
-        for (paragraph, target) in slots.iter().zip(targets) {
-            for (index, slot) in paragraph.texts.iter().enumerate() {
-                cancel.check()?;
-                output.push_str(&xml[offset..slot.start]);
-                if index == 0 {
-                    output.push_str("<w:t xml:space=\"preserve\">");
-                    output.push_str(&super::escaped(target)?);
-                    output.push_str("</w:t>");
-                }
-                offset = slot.end;
-            }
+        let mut cursor = 0;
+        for (slot, target) in slots.iter().zip(targets) {
+            cancel.check()?;
+            output.push_str(&xml[cursor..slot.content.0]);
+            output.push_str(&rebuild_paragraph(&xml, slot, target, cancel)?);
+            cursor = slot.content.1;
         }
-        output.push_str(&xml[offset..]);
+        output.push_str(&xml[cursor..]);
         writer
             .start_file(
                 MAIN,
@@ -742,8 +1184,12 @@ pub fn serialize_docx(
     }
     let output = writer.finish().map_err(zip_error)?.into_inner();
     let roundtrip = inspect(&output, cancel)?;
-    if roundtrip.iter().map(|s| &s.text).ne(targets.iter()) {
-        return Err(invalid("Verificación round-trip DOCX falló; no se exportó"));
+    for (slot, target) in roundtrip.iter().zip(targets) {
+        let (plain_target, x_target, g_target) = plain_codes(target);
+        let (plain_round, x_round, g_round) = plain_codes(&slot.text);
+        if plain_target != plain_round || x_target != x_round || g_target != g_round {
+            return Err(invalid("Verificación round-trip DOCX falló; no se exportó"));
+        }
     }
     Ok(output)
 }

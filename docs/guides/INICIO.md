@@ -34,9 +34,11 @@ Los atajos principales se basan en el [perfil predeterminado documentado por RWS
 
 ## DOCX / Microsoft Word
 
-DOCX OOXML Transitional, párrafos en cuerpo y celdas, con varios fragmentos/runs únicamente cuando su formato inline es idéntico; admite estilos de párrafo y formato del párrafo, además de tablas simples y marcadores de párrafo. Decodifica referencias XML y conserva bytes de otras partes (styles, numbering, media, relaciones). Rechaza formato mixto, campos, tracked changes, hyperlinks, content controls, macros/OLE, saltos/tabulaciones, texto en stories secundarias y relaciones ambiguas o rotas. Muchos documentos Word reales quedan fuera de este subset: el editor de tags/runs de M2 es requisito para ampliarlo con fidelidad.
+DOCX OOXML Transitional con párrafos en cuerpo y celdas, tablas (incluidas celdas combinadas) y marcadores alrededor de la secuencia de runs. Los runs contiguos con formato inline idéntico forman regiones; las fronteras de estilo se exponen como códigos protegidos `<g id="k">…</g>` y las imágenes estáticas embebidas como `<x id="k"/>` (mismo modelo de tags del editor). La exportación exige todos los códigos presentes, sin duplicar ni anidar, y reconstruye un run por fragmento con su `w:rPr` original; las imágenes y todas las partes ajenas se copian byte a byte. Un DOCX sin texto traducible importa con cero segmentos y exporta idéntico.
 
-CR/LF/TAB no se convierten silenciosamente a espacios en Word: export rechazado. Namespace alternativo de Word/OPC y Strict todavía no soportados. No existe preview Word ni validación visual real. Round-trip propio y preservación ZIP no prueban por sí solos render equivalente en Microsoft Word.
+Sigue rechazando con mensaje explícito: campos, tracked changes, hyperlinks, content controls, macros/OLE, saltos/tabulaciones (`w:tab`/`w:br`/`w:cr`), cuadros de texto/gráficos/SmartArt/VML dentro de dibujos, runs con texto e imagen juntos, marcado intercalado entre runs de un párrafo, texto en stories secundarias (headers/footers/notas) y relaciones ambiguas o rotas. Los atributos `w:rsid*` de los runs reescritos se pierden sin efecto en Word.
+
+CR/LF/TAB no se convierten silenciosamente a espacios en Word: export rechazado. Namespace alternativo de Word/OPC y Strict todavía no soportados. No existe preview Word dentro de la app; la fidelidad verificada hasta ahora usa Word real vía COM (estructura) y comparación de render PDF, ver `docs/technical/CONTINUACION_DOCX.md`.
 
 ## Límites y recuperación
 

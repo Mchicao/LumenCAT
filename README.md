@@ -34,13 +34,13 @@ Automatic saving and persistent edit history help preserve your progress between
 
 ## Your documents, together
 
-Keep projects, documents, and translation memories organized locally. LumenCAT currently supports plain text documents, text-based XLIFF 1.2 files, a limited set of Microsoft Word DOCX documents, and text-based TMX translation memories.
+Keep projects, documents, and translation memories organized locally. LumenCAT currently supports plain text documents, text-based XLIFF 1.2 files, Microsoft Word DOCX documents with tables, inline pictures, and mixed formatting exposed as protected codes, and text-based TMX translation memories.
 
 ## Built around translator autonomy
 
 Your documents and translation data stay under your control. The current workflow runs entirely on your computer, with no cloud dependency. Translation memory suggestions are references you choose to apply, and quality checks inform your decisions.
 
-LumenCAT is in active development. Document compatibility is still expanding, particularly for complex Word files; validate your document workflow before using it for client delivery.
+LumenCAT is in active development. Document compatibility is still expanding: Word headers, footers, hyperlinks, fields, and revision marks are not translated yet; validate your document workflow before using it for client delivery.
 
 ## Technology
 

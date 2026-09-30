@@ -41,7 +41,7 @@ fn attr(element: &BytesStart<'_>, key: &[u8]) -> Result<Option<String>> {
 }
 
 /// Valida XML sin DTD, entidades externas ni codificaciones implícitas.
-fn validate_xml(bytes: &[u8], relationship: bool) -> Result<()> {
+fn validate_xml(bytes: &[u8]) -> Result<()> {
     let text = std::str::from_utf8(bytes).map_err(|_| invalid("DOCX requiere XML UTF-8"))?;
     if text.chars().any(|c| !super::xml_char(c)) {
         return Err(invalid("Carácter XML DOCX inválido"));
@@ -71,16 +71,10 @@ fn validate_xml(bytes: &[u8], relationship: bool) -> Result<()> {
                         .unescape_value()
                         .map_err(|e| invalid(e.to_string()))?;
                 }
-                if relationship && attr(element, b"TargetMode")?.as_deref() == Some("External") {
-                    return Err(invalid("DOCX con relaciones externas no soportado"));
-                }
                 if attr(element, b"ContentType")?.is_some_and(|v| {
                     let v = v.to_ascii_lowercase();
                     v.contains("macroenabled") || v.contains("vbaproject")
-                }) || relationship
-                    && attr(element, b"Type")?
-                        .is_some_and(|v| v.to_ascii_lowercase().contains("vbaproject"))
-                {
+                }) {
                     return Err(invalid("Contenido de macros Word no soportado"));
                 }
                 if depth == 0 {
@@ -94,9 +88,18 @@ fn validate_xml(bytes: &[u8], relationship: bool) -> Result<()> {
                 }
             }
             Event::GeneralRef(reference) => {
-                let entity = reference.decode().map_err(|e| invalid(e.to_string()))?;
-                quick_xml::escape::unescape(&format!("&{entity};"))
-                    .map_err(|e| invalid(e.to_string()))?;
+                if let Some(character) = reference
+                    .resolve_char_ref()
+                    .map_err(|e| invalid(e.to_string()))?
+                {
+                    if !super::xml_char(character) {
+                        return Err(invalid("Referencia a carácter inválido en XML DOCX"));
+                    }
+                } else {
+                    let entity = reference.decode().map_err(|e| invalid(e.to_string()))?;
+                    quick_xml::escape::unescape(&format!("&{entity};"))
+                        .map_err(|e| invalid(e.to_string()))?;
+                }
             }
             Event::End(_) => {
                 depth = depth
@@ -203,8 +206,14 @@ fn validate_relationship_targets(name: &str, text: &str, parts: &HashSet<String>
                 if !matches!(attr(&e, b"TargetMode")?.as_deref(), None | Some("Internal")) {
                     return Err(invalid("TargetMode OPC no soportado"));
                 }
-                if attr(&e, b"Type")?.is_none_or(|t| t.is_empty()) {
-                    return Err(invalid("Relación OPC sin Type"));
+                let relationship_type = attr(&e, b"Type")?
+                    .filter(|t| !t.is_empty())
+                    .ok_or_else(|| invalid("Relación OPC sin Type"))?;
+                if relationship_type
+                    .to_ascii_lowercase()
+                    .contains("vbaproject")
+                {
+                    return Err(invalid("Contenido de macros Word no soportado"));
                 }
                 let target = attr(&e, b"Target")?
                     .filter(|t| !t.is_empty())
@@ -239,7 +248,6 @@ fn validate_relationship_targets(name: &str, text: &str, parts: &HashSet<String>
     Ok(())
 }
 fn text_slots(xml: &[u8], cancel: &Cancellation) -> Result<Vec<ParagraphSlot>> {
-    validate_xml(xml, false)?;
     let text = std::str::from_utf8(xml).map_err(|e| invalid(e.to_string()))?;
     let mut reader = Reader::from_str(text);
     let mut slots = Vec::new();
@@ -251,7 +259,7 @@ fn text_slots(xml: &[u8], cancel: &Cancellation) -> Result<Vec<ParagraphSlot>> {
     let mut run_style_start = None;
     let mut run_has_style = false;
     let mut run_has_text = false;
-    let mut active: Option<(usize, usize)> = None;
+    let mut active: Option<(usize, String)> = None;
     let mut root = false;
     let mut stack: Vec<Vec<u8>> = Vec::new();
     loop {
@@ -291,8 +299,6 @@ fn text_slots(xml: &[u8], cancel: &Cancellation) -> Result<Vec<ParagraphSlot>> {
                         | b"moveTo"
                         | b"sdt"
                         | b"txbxContent"
-                        | b"bookmarkStart"
-                        | b"bookmarkEnd"
                         | b"drawing"
                         | b"pict"
                         | b"object"
@@ -340,6 +346,8 @@ fn text_slots(xml: &[u8], cancel: &Cancellation) -> Result<Vec<ParagraphSlot>> {
                     run_style = None;
                     run_has_style = false;
                     run_has_text = false;
+                } else if name == b"w:rPr" && stack.last().map(Vec::as_slice) == Some(b"w:pPr") {
+                    // Paragraph-mark formatting does not affect the text runs.
                 } else if name == b"w:rPr" {
                     if stack.last().map(Vec::as_slice) != Some(b"w:r")
                         || run_has_style
@@ -373,7 +381,7 @@ fn text_slots(xml: &[u8], cancel: &Cancellation) -> Result<Vec<ParagraphSlot>> {
                             return Err(invalid("Atributo w:t no soportado"));
                         }
                     }
-                    active = Some((before, reader.buffer_position() as usize));
+                    active = Some((before, String::new()));
                 }
                 if matches!(event, Event::Empty(_)) && name == b"w:p" {
                     paragraph = false;
@@ -385,11 +393,11 @@ fn text_slots(xml: &[u8], cancel: &Cancellation) -> Result<Vec<ParagraphSlot>> {
             Event::End(element) => {
                 let name = element.name();
                 if name.as_ref() == b"w:rPr" {
-                    let start = run_style_start
-                        .take()
-                        .ok_or_else(|| invalid("Propiedades de run Word sin apertura"))?;
-                    run_style =
-                        Some(text.as_bytes()[start..reader.buffer_position() as usize].to_vec());
+                    if let Some(start) = run_style_start.take() {
+                        run_style = Some(
+                            text.as_bytes()[start..reader.buffer_position() as usize].to_vec(),
+                        );
+                    }
                 } else if name.as_ref() == b"w:r" {
                     let style = run_style.take().unwrap_or_default();
                     if paragraph_run_style
@@ -402,14 +410,9 @@ fn text_slots(xml: &[u8], cancel: &Cancellation) -> Result<Vec<ParagraphSlot>> {
                     }
                     paragraph_run_style.get_or_insert(style);
                 } else if name.as_ref() == b"w:t" {
-                    let (start, content) = active
+                    let (start, value) = active
                         .take()
                         .ok_or_else(|| invalid("Texto Word sin apertura"))?;
-                    let raw = &text[content..before];
-                    let normalized = raw.replace("\r\n", "\n").replace('\r', "\n");
-                    let value = quick_xml::escape::unescape(&normalized)
-                        .map_err(|e| invalid(e.to_string()))?
-                        .into_owned();
                     if value.is_empty() || value.chars().any(|c| !super::xml_char(c)) {
                         return Err(invalid(
                             "w:t vacío o con caracteres XML inválidos no soportado",
@@ -441,14 +444,25 @@ fn text_slots(xml: &[u8], cancel: &Cancellation) -> Result<Vec<ParagraphSlot>> {
             Event::Comment(_) | Event::PI(_) if active.is_some() => {
                 return Err(invalid("Marcado dentro de texto Word no soportado"));
             }
-            Event::Text(t) if active.is_none() => {
-                if !t
+            Event::Text(t) => {
+                if let Some((_, value)) = active.as_mut() {
+                    if let Some(decoded) = super::text_event(&Event::Text(t))? {
+                        value.push_str(&decoded);
+                    }
+                } else if !t
                     .decode()
                     .map_err(|e| invalid(e.to_string()))?
                     .trim()
                     .is_empty()
                 {
                     return Err(invalid("Texto Word fuera de w:t"));
+                }
+            }
+            Event::GeneralRef(reference) if active.is_some() => {
+                if let Some(decoded) = super::text_event(&Event::GeneralRef(reference))?
+                    && let Some((_, value)) = active.as_mut()
+                {
+                    value.push_str(&decoded);
                 }
             }
             Event::Eof => break,
@@ -483,9 +497,6 @@ fn inspect(bytes: &[u8], cancel: &Cancellation) -> Result<Vec<ParagraphSlot>> {
     // zip indexa por nombre; el contador original detecta nombres duplicados descartados por su mapa.
     if archive.len() != count {
         return Err(invalid("Entradas ZIP duplicadas"));
-    }
-    if archive.len() > 2048 {
-        return Err(invalid("DOCX supera 2048 partes"));
     }
     let mut names = HashSet::new();
     let parts: HashSet<String> = archive.file_names().map(str::to_ascii_lowercase).collect();
@@ -536,7 +547,7 @@ fn inspect(bytes: &[u8], cancel: &Cancellation) -> Result<Vec<ParagraphSlot>> {
             return Err(invalid("Tamaño real ZIP inválido"));
         }
         if lower_name.ends_with(".xml") || lower_name.ends_with(".rels") {
-            validate_xml(&data, lower_name.ends_with(".rels"))?;
+            validate_xml(&data)?;
             let text = std::str::from_utf8(&data).map_err(|e| invalid(e.to_string()))?;
             if lower_name.ends_with(".rels") || name == "[Content_Types].xml" {
                 validate_opc_namespace(text, lower_name.ends_with(".rels"))?;
@@ -631,7 +642,13 @@ pub fn import_docx(
     if std::fs::metadata(path)?.len() > MAX_TOTAL {
         return Err(invalid("Archivo DOCX demasiado grande"));
     }
-    let original = std::fs::read(path)?;
+    let mut original = Vec::new();
+    std::fs::File::open(path)?
+        .take(MAX_TOTAL + 1)
+        .read_to_end(&mut original)?;
+    if original.len() as u64 > MAX_TOTAL {
+        return Err(invalid("Archivo DOCX demasiado grande"));
+    }
     let slots = inspect(&original, cancel)?;
     Ok(ImportedDocument {
         name: path

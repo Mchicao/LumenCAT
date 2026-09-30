@@ -1,6 +1,6 @@
-use crate::worker::{Data, Request, Task, Worker};
 use eframe::egui::{self, Color32, Key, RichText};
 use lumencat::model::*;
+use lumencat::worker::{Data, Request, Task, Worker};
 use std::{
     collections::{BTreeMap, HashMap},
     path::PathBuf,
@@ -259,6 +259,7 @@ impl CatApp {
                     );
                 }
                 Ok(data) => match data {
+                    Data::Progress(_, _, _) => {}
                     Data::Opened(recovered, docs) => {
                         self.opened = true;
                         self.documents = docs;

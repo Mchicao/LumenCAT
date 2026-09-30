@@ -6,7 +6,20 @@ Primer slice funcional en desarrollo; no sustituye todavía una herramienta CAT 
 
 Desde `C:/Proyectos/LumenCAT`, `cargo run --locked --release --bin lumencat`. El ejecutable standalone está en `output/lumencat.exe` cuando se publica la build local. Se puede ejecutar desde cualquier directorio. Opcional: `lumencat.exe --project C:/ruta/proyecto.db`. No se requiere Rust para ejecutar ese EXE en Windows compatible, pero no hay instalador firmado ni distribución verificada en otra máquina.
 
-## Flujo
+## Interfaz GPUI (predeterminada)
+
+`cargo run --locked` abre GPUI. Para la interfaz anterior: `cargo run --locked -- --legacy-egui`. Ambas aceptan `--project C:/ruta/proyecto.lcat`.
+
+- Abre/crea un proyecto, importa documentos con los botones del encabezado y selecciona un documento en la barra lateral. Los proyectos nuevos GPUI usan en→es; los documentos existentes conservan su par.
+- Clic en una fila o ↑/↓ para navegar; el destino recibe foco. La fila activa se mantiene visible. Ctrl+Enter confirma y avanza, Alt+C copia el origen y Ctrl+L bloquea/desbloquea.
+- Ctrl+, o Ctrl+Alt+flecha inserta la siguiente etiqueta `<g>`, `</g>` o `<x/>` que falta. Los badges son representación del texto; no amplían el subset XLIFF/DOCX del importador.
+- Ctrl+F busca en origen/destino, con alcance de segmento o documento. Ctrl+H abre reemplazo literal, sensible a mayúsculas, solo en destinos. El reemplazo de documento es transaccional, ignora segmentos bloqueados y conserva tags. Ctrl+Z/Y deshace/rehace cada segmento del historial.
+- El progreso cuenta destinos no vacíos en todo el documento; no equivale a confirmación ni QA aprobada. Clic en la barra va al primer pendiente cargado. El editor muestra palabras, caracteres Unicode y margen en bytes del límite UTF-8 de 1 MiB. El porcentaje TM aplicado se muestra durante la sesión; no se persiste como metadata.
+- Autoguardado periódico sin otra pulsación. El cierre espera el commit y el cierre del worker; un error impide cerrar para conservar el borrador. La recuperación TXT mediante diálogo pertenece a la interfaz anterior.
+
+GPUI aún no virtualiza el grid completo ni tiene navegación de cursor con clic/selección parcial por ratón. El puente de entrada nativa está conectado; no se afirma validación completa de IME, RTL o accesibilidad. La tabla bilingüe representa segmentos, no el diseño visual de Word.
+
+## Flujo de la interfaz anterior
 
 1. En Proyecto indica ruta nueva `.db` o existente y abre/crea. La carpeta debe existir. No usar carpetas de sincronización activa ni aliases/hardlinks para SQLite: esta versión no valida todos los escenarios de sync/FS; WAL y DB deben permanecer juntos.
 2. Define idiomas de importación (`en` / `es`, etc.). En Archivo indica TXT, XLF/XLIFF o DOCX soportado y pulsa importar. Selecciona documento y segmento.
@@ -17,7 +30,7 @@ Desde `C:/Proyectos/LumenCAT`, `cargo run --locked --release --bin lumencat`. El
 
 ## DOCX / Microsoft Word
 
-DOCX OOXML Transitional, párrafos en cuerpo y celdas, con varios fragmentos/runs únicamente cuando su formato inline es idéntico; admite estilos de párrafo y tablas simples. Conserva bytes de otras partes (styles, numbering, media, relaciones). Rechaza formato mixto, campos, tracked changes, hyperlinks, content controls, macros/OLE, saltos/tabulaciones, texto en stories secundarias y relaciones ambiguas o rotas. Muchos documentos Word reales quedan fuera de este subset: el editor de tags/runs de M2 es requisito para ampliarlo con fidelidad.
+DOCX OOXML Transitional, párrafos en cuerpo y celdas, con varios fragmentos/runs únicamente cuando su formato inline es idéntico; admite estilos de párrafo y formato del párrafo, además de tablas simples y marcadores de párrafo. Decodifica referencias XML y conserva bytes de otras partes (styles, numbering, media, relaciones). Rechaza formato mixto, campos, tracked changes, hyperlinks, content controls, macros/OLE, saltos/tabulaciones, texto en stories secundarias y relaciones ambiguas o rotas. Muchos documentos Word reales quedan fuera de este subset: el editor de tags/runs de M2 es requisito para ampliarlo con fidelidad.
 
 CR/LF/TAB no se convierten silenciosamente a espacios en Word: export rechazado. Namespace alternativo de Word/OPC y Strict todavía no soportados. No existe preview Word ni validación visual real. Round-trip propio y preservación ZIP no prueban por sí solos render equivalente en Microsoft Word.
 
@@ -25,7 +38,7 @@ CR/LF/TAB no se convierten silenciosamente a espacios en Word: export rechazado.
 
 TXT UTF-8, líneas como segmentos y terminadores preservados; XLIFF 1.2 textual sin códigos inline ni seg-source; SDLXLIFF/paquetes no soportados. TMX textual: códigos inline rechazados; metadata TU y variantes originales conservadas, header de export generado por LumenCAT (header original completo aún no almacenado). Idiomas y textos raw no normalizados al guardar, NFC solo auxiliar.
 
-Límite persistido source/target 1 MiB por segmento; documentos generales 256 MiB, DOCX 128 MiB y partes 32 MiB/2048 entradas. Import/export de documentos actualmente usa buffer completo fuera UI, no streaming universal: ver benchmarks y memoria pendiente. UI conserva máximo 1024 filas más segmento activo; TM vive en SQLite.
+Límite persistido source/target 1 MiB por segmento; documentos generales 256 MiB, DOCX 128 MiB y partes 32 MiB/2048 entradas. Import/export de documentos actualmente usa buffer completo fuera UI, no streaming universal: ver benchmarks y memoria pendiente. La interfaz anterior conserva máximo 1024 filas más segmento activo; GPUI actualmente carga el documento completo; TM vive en SQLite.
 
 Un cierre abrupto activa recuperación SQLite y aviso. Los commits confirmados son durables dentro de garantías del SO/dispositivo; puede perderse texto aún pendiente o fallar hardware. Si la integridad falla, se rechaza edición: conservar DB/WAL/SHM y restaurar respaldo. No hay reparador de corrupción ni backups automáticos todavía; no copiar solo DB durante sesión activa.
 

@@ -40,7 +40,8 @@ fn escaped(text: &str) -> Result<String> {
     Ok(quick_xml::escape::escape(text).replace('\r', "&#13;"))
 }
 fn xml_char(c: char) -> bool {
-    matches!(c, '\t' | '\n' | '\r') || c >= '\u{20}' && c != '\u{fffe}' && c != '\u{ffff}'
+    matches!(c, '\t' | '\n' | '\r')
+        || matches!(c, '\u{20}'..='\u{d7ff}' | '\u{e000}'..='\u{fffd}' | '\u{10000}'..='\u{10ffff}')
 }
 fn text_event(event: &Event<'_>) -> Result<Option<String>> {
     let text = match event {

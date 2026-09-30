@@ -15,11 +15,18 @@ zip = { version = "=4.6.1", default-features = false, features = ["deflate-flate
 thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "json", "registry"] }
+gpui = "0.2.2"
+async-channel = "2.5.0"
+rfd = "0.17.2"
 
 [profile.release]
 lto = "thin"
 codegen-units = 1
 strip = "debuginfo"
+
+[[example]]
+name = "verify_docx"
+path = "scripts/utils/verify_docx.rs"
 
 [profile.dev]
 debug = 0

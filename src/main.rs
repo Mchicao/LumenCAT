@@ -1,5 +1,4 @@
 mod app;
-mod worker;
 
 fn main() -> eframe::Result {
     let log_root = std::env::var_os("LOCALAPPDATA")
@@ -14,12 +13,15 @@ fn main() -> eframe::Result {
         event = "application_start",
         version = env!("CARGO_PKG_VERSION")
     );
-    let mut args = std::env::args().skip(1);
-    let project = if args.next().as_deref() == Some("--project") {
-        args.next()
-    } else {
-        None
-    };
+    let args: Vec<_> = std::env::args().skip(1).collect();
+    let project = args
+        .windows(2)
+        .find(|pair| pair[0] == "--project")
+        .map(|pair| pair[1].clone());
+    if !args.iter().any(|arg| arg == "--legacy-egui") {
+        lumencat::gpui_app::runtime::run(project);
+        return Ok(());
+    }
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([1400.0, 900.0])

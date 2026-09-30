@@ -1,5 +1,8 @@
+pub mod editing;
 pub mod formats;
+pub mod gpui_app;
 pub mod model;
 pub mod qa;
 pub mod storage;
 pub mod tm;
+pub mod worker;

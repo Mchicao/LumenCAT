@@ -1,4 +1,10 @@
-use lumencat::{formats, model::*, storage::ProjectStore};
+use crate::{
+    formats,
+    model::{self, *},
+    qa,
+    storage::ProjectStore,
+};
+use model::Result;
 use std::{
     io::Write,
     path::PathBuf,
@@ -23,6 +29,8 @@ pub enum Task {
     Export(i64, PathBuf, Cancellation),
     Close,
     Qa(String, String, bool),
+    Progress(i64),
+    ReplaceTargets(i64, String, String),
     RecoverText(PathBuf, String, Cancellation),
 }
 pub enum Data {
@@ -36,6 +44,7 @@ pub enum Data {
     Done(String),
     Closed,
     Qa(Vec<QaIssue>),
+    Progress(i64, usize, usize),
 }
 pub struct Request {
     pub id: u64,
@@ -81,6 +90,36 @@ impl Worker {
         });
         Self { sender, receiver }
     }
+
+    pub fn start_async() -> (SyncSender<Request>, async_channel::Receiver<Reply>) {
+        let (sender, input) = mpsc::sync_channel::<Request>(32);
+        let (output, receiver) = async_channel::bounded::<Reply>(32);
+        thread::spawn(move || {
+            let mut store = None;
+            while let Ok(request) = input.recv() {
+                let started = std::time::Instant::now();
+                let result = run(&mut store, request.task);
+                if result.is_err() {
+                    tracing::warn!(event = "worker_operation_failed", request_id = request.id);
+                }
+                tracing::debug!(
+                    event = "worker_operation_completed",
+                    request_id = request.id,
+                    elapsed_us = started.elapsed().as_micros() as u64
+                );
+                if output
+                    .send_blocking(Reply {
+                        id: request.id,
+                        result,
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+        (sender, receiver)
+    }
 }
 
 fn run(store: &mut Option<ProjectStore>, task: Task) -> Result<Data> {
@@ -104,9 +143,30 @@ fn run(store: &mut Option<ProjectStore>, task: Task) -> Result<Data> {
         Task::Page(document, start, query) => {
             Ok(Data::Page(db.page(document, start, 128, &query)?))
         }
-        Task::Search(document, start, query, cancel) => Ok(Data::Page(
-            db.search_page(document, start, 128, &query, &cancel)?,
-        )),
+        Task::Search(document, start, query, cancel) => {
+            let mut rows = Vec::new();
+            let mut next = start;
+            loop {
+                let page = db.search_page(document, next, 128, &query, &cancel)?;
+                let done = page.len() < 128;
+                if let Some(last) = page.last() {
+                    next = last.ordinal + 1;
+                }
+                rows.extend(page);
+                if done {
+                    break;
+                }
+            }
+            Ok(Data::Page(rows))
+        }
+        Task::Progress(id) => {
+            let (total, translated) = db.progress(id)?;
+            Ok(Data::Progress(id, total, translated))
+        }
+        Task::ReplaceTargets(id, query, replacement) => {
+            let count = db.replace_targets(id, &query, &replacement)?;
+            Ok(Data::Done(format!("Reemplazo guardado: {count} segmentos")))
+        }
         Task::Select(id) => Ok(Data::Selected(db.segment(id)?)),
         Task::AtOrdinal(document, ordinal) => db
             .page(document, ordinal, 1, "")?
@@ -143,9 +203,7 @@ fn run(store: &mut Option<ProjectStore>, task: Task) -> Result<Data> {
             db.close()?;
             Ok(Data::Closed)
         }
-        Task::Qa(source, target, confirmed) => {
-            Ok(Data::Qa(lumencat::qa::check(&source, &target, confirmed)))
-        }
+        Task::Qa(source, target, confirmed) => Ok(Data::Qa(qa::check(&source, &target, confirmed))),
         Task::RecoverText(path, text, cancel) => {
             cancel.check()?;
             let parent = path

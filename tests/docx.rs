@@ -326,3 +326,17 @@ fn rejects_literal_linebreak_sources() -> Result<(), Box<dyn std::error::Error>>
     }
     Ok(())
 }
+
+#[test]
+fn bookmarks_survive_translation_without_moving_their_anchors()
+-> Result<(), Box<dyn std::error::Error>> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("bookmarks.docx");
+    let body = r#"<w:p><w:bookmarkStart w:id="1" w:name="anchor"/><w:r><w:t>Hello</w:t></w:r><w:bookmarkEnd w:id="1"/></w:p>"#;
+    package(&path, &document(body), &[])?;
+    let imported = import_docx(&path, "en", "es", &Cancellation::default())?;
+    let output = serialize_docx(&imported, &["Hola".into()], &Cancellation::default())?;
+    let xml = String::from_utf8(part(&output, "word/document.xml")?)?;
+    assert!(xml.contains(r#"<w:bookmarkStart w:id="1" w:name="anchor"/><w:r><w:t xml:space="preserve">Hola</w:t></w:r><w:bookmarkEnd w:id="1"/>"#));
+    Ok(())
+}

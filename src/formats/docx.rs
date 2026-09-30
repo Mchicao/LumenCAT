@@ -299,8 +299,6 @@ fn text_slots(xml: &[u8], cancel: &Cancellation) -> Result<Vec<ParagraphSlot>> {
                         | b"moveTo"
                         | b"sdt"
                         | b"txbxContent"
-                        | b"bookmarkStart"
-                        | b"bookmarkEnd"
                         | b"drawing"
                         | b"pict"
                         | b"object"

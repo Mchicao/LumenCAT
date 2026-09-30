@@ -241,53 +241,55 @@ impl ProjectStore {
     }
     pub fn edit(&mut self, command: &EditCommand) -> Result<Segment> {
         self.writable()?;
-        if command.target.len() > 1_048_576 {
-            return Err(CatError::Invalid(
-                "Traducción demasiado grande para este MVP".into(),
-            ));
-        }
         let tx = self.connection.transaction()?;
-        let before = get_segment(&tx, command.segment_id)?;
-        if before.revision != command.expected_revision {
-            return Err(CatError::Invalid(
-                "El segmento cambió; vuelve a cargarlo antes de editar".into(),
-            ));
-        }
-        if before.locked && command.target != before.target {
-            return Err(CatError::Invalid(
-                "Desbloquea el segmento antes de editar su texto".into(),
-            ));
-        }
-        if command.target == before.target
-            && command.state == before.state
-            && command.locked == before.locked
-            && command.origin == before.origin
-        {
-            return Ok(before);
-        }
-        let cursor: i64 =
-            tx.query_row("SELECT cursor FROM session WHERE id=1", [], |r| r.get(0))?;
-        tx.execute("DELETE FROM history WHERE id>?1", [cursor])?;
-        tx.execute(
-            "INSERT INTO history VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
-            params![
-                cursor + 1,
-                before.id,
-                before.target,
-                before.state.as_str(),
-                before.locked,
-                before.origin.as_str(),
-                command.target,
-                command.state.as_str(),
-                command.locked,
-                command.origin.as_str()
-            ],
-        )?;
-        tx.execute("UPDATE segments SET target=?1,state=?2,locked=?3,origin=?4,revision=revision+1 WHERE id=?5",params![command.target,command.state.as_str(),command.locked,command.origin.as_str(),before.id])?;
-        tx.execute("UPDATE session SET cursor=?1 WHERE id=1", [cursor + 1])?;
-        let after = get_segment(&tx, before.id)?;
+        let after = apply_edit(&tx, command)?;
         tx.commit()?;
         Ok(after)
+    }
+    pub fn progress(&self, document: i64) -> Result<(usize, usize)> {
+        Ok(self.connection.query_row(
+            "SELECT count(*), coalesce(sum(trim(target)<>''),0) FROM segments WHERE document_id=?1",
+            [document],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?)
+    }
+    pub fn replace_targets(
+        &mut self,
+        document: i64,
+        query: &str,
+        replacement: &str,
+    ) -> Result<usize> {
+        self.writable()?;
+        if query.is_empty() {
+            return Err(CatError::Invalid("La búsqueda está vacía".into()));
+        }
+        let tx = self.connection.transaction()?;
+        let segments = {
+            let mut statement = tx.prepare("SELECT id,document_id,ordinal,external_id,source,target,state,locked,origin,revision FROM segments WHERE document_id=?1 AND locked=0 AND instr(target,?2)>0 ORDER BY ordinal")?;
+            let rows = statement.query_map(params![document, query], read_segment)?;
+            rows.map(|r| decode_segment(r?))
+                .collect::<Result<Vec<_>>>()?
+        };
+        let mut count = 0;
+        for segment in segments {
+            let target = crate::editing::replace_text(&segment.target, query, replacement);
+            if target != segment.target {
+                apply_edit(
+                    &tx,
+                    &EditCommand {
+                        segment_id: segment.id,
+                        expected_revision: segment.revision,
+                        target,
+                        state: SegmentState::Draft,
+                        locked: false,
+                        origin: Origin::Human,
+                    },
+                )?;
+                count += 1;
+            }
+        }
+        tx.commit()?;
+        Ok(count)
     }
     pub fn undo(&mut self) -> Result<Option<Segment>> {
         self.history(false)
@@ -489,4 +491,49 @@ fn decode_segment(
 }
 fn get_segment(connection: &Connection, id: i64) -> Result<Segment> {
     decode_segment(connection.query_row("SELECT id,document_id,ordinal,external_id,source,target,state,locked,origin,revision FROM segments WHERE id=?1",[id],read_segment)?)
+}
+
+fn apply_edit(tx: &rusqlite::Transaction<'_>, command: &EditCommand) -> Result<Segment> {
+    if command.target.len() > 1_048_576 {
+        return Err(CatError::Invalid("Traducción demasiado grande".into()));
+    }
+    let before = get_segment(tx, command.segment_id)?;
+    if before.revision != command.expected_revision {
+        return Err(CatError::Invalid(
+            "El segmento cambió; vuelve a cargarlo antes de editar".into(),
+        ));
+    }
+    if before.locked && command.target != before.target {
+        return Err(CatError::Invalid(
+            "Desbloquea el segmento antes de editar su texto".into(),
+        ));
+    }
+    if command.target == before.target
+        && command.state == before.state
+        && command.locked == before.locked
+        && command.origin == before.origin
+    {
+        return Ok(before);
+    }
+    let cursor: i64 = tx.query_row("SELECT cursor FROM session WHERE id=1", [], |r| r.get(0))?;
+    tx.execute("DELETE FROM history WHERE id>?1", [cursor])?;
+    tx.execute(
+        "INSERT INTO history VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+        params![
+            cursor + 1,
+            before.id,
+            before.target,
+            before.state.as_str(),
+            before.locked,
+            before.origin.as_str(),
+            command.target,
+            command.state.as_str(),
+            command.locked,
+            command.origin.as_str()
+        ],
+    )?;
+    tx.execute("UPDATE segments SET target=?1,state=?2,locked=?3,origin=?4,revision=revision+1 WHERE id=?5",params![command.target,command.state.as_str(),command.locked,command.origin.as_str(),before.id])?;
+    tx.execute("UPDATE session SET cursor=?1 WHERE id=1", [cursor + 1])?;
+    let after = get_segment(tx, before.id)?;
+    Ok(after)
 }

@@ -124,6 +124,7 @@ pub struct LumenCatApp {
     pub closing_requested: bool,
     cancellations: HashMap<u64, Cancellation>,
     pub focus_handle: FocusHandle,
+    show_memory_actions: bool,
 }
 
 impl Focusable for LumenCatApp {
@@ -170,6 +171,7 @@ impl LumenCatApp {
             closing_requested: false,
             cancellations: HashMap::new(),
             focus_handle: cx.focus_handle(),
+            show_memory_actions: false,
         };
 
         if !app.project_path.trim().is_empty() {
@@ -320,7 +322,7 @@ impl LumenCatApp {
         }
     }
 
-    pub fn confirm_and_next(&mut self) {
+    pub fn confirm_active(&mut self) {
         if let Some(active) = &mut self.active_draft
             && !active.segment.locked
         {
@@ -329,6 +331,13 @@ impl LumenCatApp {
             active.changed = Instant::now();
         }
         self.save(true);
+    }
+
+    pub fn confirm_and_next(&mut self) {
+        if self.active_draft.as_ref().is_none_or(|a| a.segment.locked) {
+            return;
+        }
+        self.confirm_active();
         self.move_segment(1);
     }
 
@@ -839,6 +848,12 @@ impl Render for LumenCatApp {
                     }
                     this.show_replace = false;
                     this.target_input.focus_handle.focus(window);
+                } else if ks.modifiers.control && ks.key == "s" {
+                    this.save(true);
+                } else if ks.modifiers.shift && ks.key == "f12" {
+                    this.export_document_dialog();
+                } else if ks.key == "f3" && search && !ks.modifiers.shift {
+                    this.perform_concordance();
                 } else if search || replacement {
                     if ks.key == "enter" {
                         this.perform_search();
@@ -854,13 +869,35 @@ impl Render for LumenCatApp {
                 {
                     this.insert_next_tag();
                 } else if ks.modifiers.control && ks.key == "z" {
-                    this.history(false);
+                    this.history(ks.modifiers.shift);
                 } else if ks.modifiers.control && ks.key == "y" {
                     this.history(true);
-                } else if ks.modifiers.control && ks.key == "s" {
-                    this.save(true);
                 } else if ks.modifiers.control && ks.key == "enter" {
-                    this.confirm_and_next();
+                    if ks.modifiers.alt {
+                        this.confirm_active();
+                    } else {
+                        this.confirm_and_next();
+                    }
+                } else if (ks.modifiers.control || ks.modifiers.alt) && ks.key == "insert" {
+                    this.copy_source_to_target();
+                } else if ks.modifiers.control && ks.key == "t" {
+                    this.insert_tm_match(0);
+                } else if ks.modifiers.control
+                    && !ks.modifiers.alt
+                    && let Ok(index) = ks.key.parse::<usize>()
+                    && (1..=9).contains(&index)
+                {
+                    this.insert_tm_match(index - 1);
+                } else if ks.key == "f3" && !ks.modifiers.shift {
+                    let query = if this.target_input.selected_all {
+                        this.target_input.text.clone()
+                    } else {
+                        this.active_draft
+                            .as_ref()
+                            .map_or(String::new(), |a| a.segment.source.clone())
+                    };
+                    this.search_input.set_text(query);
+                    this.perform_concordance();
                 } else if ks.modifiers.control && ks.key == "l" {
                     this.toggle_active_lock();
                 } else if matches!(ks.key.as_str(), "down" | "arrowdown") {
@@ -1012,7 +1049,7 @@ impl LumenCatApp {
                     .items_center()
                     .gap_2()
                     .child(custom_button(
-                        "+ Import Doc",
+                        "Importar documento",
                         ButtonVariant::Secondary,
                         is_ready,
                         {
@@ -1024,21 +1061,23 @@ impl LumenCatApp {
                             }
                         },
                     ))
+                    .when(self.show_memory_actions, |bar| {
+                        bar.child(custom_button(
+                            "Importar TMX",
+                            ButtonVariant::Secondary,
+                            is_ready,
+                            {
+                                let entity = entity.clone();
+                                move |_event, _window, cx| {
+                                    entity.update(cx, |this, _cx| {
+                                        this.import_tmx_dialog();
+                                    });
+                                }
+                            },
+                        ))
+                    })
                     .child(custom_button(
-                        "+ Import TMX",
-                        ButtonVariant::Secondary,
-                        is_ready,
-                        {
-                            let entity = entity.clone();
-                            move |_event, _window, cx| {
-                                entity.update(cx, |this, _cx| {
-                                    this.import_tmx_dialog();
-                                });
-                            }
-                        },
-                    ))
-                    .child(custom_button(
-                        "Export Doc",
+                        "Exportar documento",
                         ButtonVariant::Secondary,
                         is_ready && doc_selected,
                         {
@@ -1050,46 +1089,47 @@ impl LumenCatApp {
                             }
                         },
                     ))
-                    .child(custom_button(
-                        "Export TMX",
-                        ButtonVariant::Secondary,
-                        is_ready,
-                        {
-                            let entity = entity.clone();
-                            move |_event, _window, cx| {
-                                entity.update(cx, |this, _cx| {
-                                    this.export_tmx_dialog();
-                                });
-                            }
-                        },
-                    ))
+                    .when(self.show_memory_actions, |bar| {
+                        bar.child(custom_button(
+                            "Exportar TMX",
+                            ButtonVariant::Secondary,
+                            is_ready,
+                            {
+                                let entity = entity.clone();
+                                move |_event, _window, cx| {
+                                    entity.update(cx, |this, _cx| {
+                                        this.export_tmx_dialog();
+                                    });
+                                }
+                            },
+                        ))
+                    })
+                    .child(custom_button("Memoria ▾", ButtonVariant::Ghost, true, {
+                        let entity = entity.clone();
+                        move |_, _, cx| {
+                            entity.update(cx, |this, cx| {
+                                this.show_memory_actions = !this.show_memory_actions;
+                                cx.notify();
+                            });
+                        }
+                    }))
                     .child(div().h(px(20.)).w(px(1.)).bg(Theme::border_subtle()))
-                    .child(custom_button(
-                        "Undo (Ctrl+Z)",
-                        ButtonVariant::Ghost,
-                        !self.is_busy(),
-                        {
-                            let entity = entity.clone();
-                            move |_event, _window, cx| {
-                                entity.update(cx, |this, _cx| {
-                                    this.history(false);
-                                });
-                            }
-                        },
-                    ))
-                    .child(custom_button(
-                        "Redo (Ctrl+Y)",
-                        ButtonVariant::Ghost,
-                        !self.is_busy(),
-                        {
-                            let entity = entity.clone();
-                            move |_event, _window, cx| {
-                                entity.update(cx, |this, _cx| {
-                                    this.history(true);
-                                });
-                            }
-                        },
-                    )),
+                    .child(history_button(false, !self.is_busy(), {
+                        let entity = entity.clone();
+                        move |_event, _window, cx| {
+                            entity.update(cx, |this, _cx| {
+                                this.history(false);
+                            });
+                        }
+                    }))
+                    .child(history_button(true, !self.is_busy(), {
+                        let entity = entity.clone();
+                        move |_event, _window, cx| {
+                            entity.update(cx, |this, _cx| {
+                                this.history(true);
+                            });
+                        }
+                    })),
             )
     }
 
@@ -1239,36 +1279,6 @@ impl LumenCatApp {
                             })
                             .collect()
                     }),
-            )
-            .child(
-                div()
-                    .p_3()
-                    .border_t_1()
-                    .border_color(Theme::border_subtle())
-                    .bg(Theme::bg_surface())
-                    .child(
-                        div()
-                            .text_xs()
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(Theme::text_secondary())
-                            .mb_1()
-                            .child("KEYBOARD SHORTCUTS"),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap_1()
-                            .text_xs()
-                            .text_color(Theme::text_muted())
-                            .child("Ctrl + Enter : Confirm & Next")
-                            .child("Alt + ↑ / ↓  : Navigate Segments")
-                            .child("Alt + C      : Copy Source to Target")
-                            .child("Ctrl + L     : Lock / Unlock Segment")
-                            .child("Ctrl + Z / Y : Undo / Redo")
-                            .child("Ctrl + , : Insertar siguiente tag")
-                            .child("Ctrl + F / H : Buscar / reemplazar"),
-                    ),
             )
     }
 
@@ -1738,7 +1748,7 @@ impl LumenCatApp {
                             .items_center()
                             .gap_2()
                             .child(custom_button(
-                                "← Previous (Alt+↑)",
+                                "Anterior",
                                 ButtonVariant::Ghost,
                                 has_active,
                                 move |_event, _window, cx| {
@@ -1748,7 +1758,7 @@ impl LumenCatApp {
                                 },
                             ))
                             .child(custom_button(
-                                "Next (Alt+↓) →",
+                                "Siguiente",
                                 ButtonVariant::Ghost,
                                 has_active,
                                 move |_event, _window, cx| {
@@ -1760,174 +1770,180 @@ impl LumenCatApp {
                     ),
             )
             .child(
-                // Source Card (Read-Only)
-                div()
-                    .rounded_md()
-                    .bg(Theme::bg_card())
-                    .border_1()
-                    .border_color(Theme::border_subtle())
-                    .p_3()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .child(
-                        div()
-                            .flex()
-                            .justify_between()
-                            .items_center()
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_color(Theme::text_secondary())
-                                    .child("ORIGINAL SOURCE (Read-only)"),
-                            )
-                            .child(custom_button(
-                                "Copy to Target (Alt+C)",
-                                ButtonVariant::Ghost,
-                                has_active && !locked,
-                                move |_event, _window, cx| {
-                                    entity_copy.update(cx, |this, _cx| {
-                                        this.copy_source_to_target();
-                                    });
-                                },
-                            )),
-                    )
-                    .child(
-                        div()
-                            .text_sm()
-                            .line_height(px(22.))
-                            .text_color(Theme::text_primary())
-                            .child(inline_text(&src_text)),
-                    ),
-            )
-            .child(
-                // Target Editor Card
                 div()
                     .flex_1()
-                    .rounded_md()
-                    .bg(Theme::bg_card())
-                    .border_1()
-                    .border_color(if locked {
-                        Theme::border_subtle()
-                    } else {
-                        Theme::border_accent()
-                    })
-                    .p_3()
+                    .min_h(px(0.))
                     .flex()
-                    .flex_col()
-                    .gap_2()
+                    .gap_3()
                     .child(
+                        // Source Card (Read-Only)
                         div()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .rounded_md()
+                            .bg(Theme::bg_card())
+                            .border_1()
+                            .border_color(Theme::border_subtle())
+                            .p_3()
                             .flex()
-                            .justify_between()
-                            .items_center()
+                            .flex_col()
+                            .gap_1()
                             .child(
                                 div()
                                     .flex()
+                                    .justify_between()
                                     .items_center()
-                                    .gap_2()
                                     .child(
                                         div()
                                             .text_xs()
                                             .font_weight(FontWeight::BOLD)
-                                            .text_color(Theme::text_accent())
-                                            .child("TARGET TRANSLATION (Editable)"),
+                                            .text_color(Theme::text_secondary())
+                                            .child("ORIGEN"),
                                     )
-                                    .child(if locked {
-                                        div()
-                                            .text_xs()
-                                            .text_color(Theme::slate())
-                                            .child("(Locked - Click Lock button below to unlock)")
-                                    } else {
-                                        div()
-                                    }),
+                                    .child(custom_button(
+                                        "Copiar origen",
+                                        ButtonVariant::Ghost,
+                                        has_active && !locked,
+                                        move |_event, _window, cx| {
+                                            entity_copy.update(cx, |this, _cx| {
+                                                this.copy_source_to_target();
+                                            });
+                                        },
+                                    )),
                             )
                             .child(
                                 div()
-                                    .text_xs()
-                                    .text_color(Theme::text_muted())
-                                    .child(format!(
-                                        "{} → {} palabras · {} caracteres · {} bytes disponibles",
-                                        editing::words(&src_text),
-                                        editing::words(&target_text),
-                                        target_text.chars().count(),
-                                        1_048_576usize.saturating_sub(target_text.len())
-                                    )),
+                                    .text_sm()
+                                    .line_height(px(22.))
+                                    .text_color(Theme::text_primary())
+                                    .child(inline_text(&src_text)),
                             ),
                     )
                     .child(
-                        // Target Text Area with Cursor
+                        // Target Editor Card
                         div()
-                            .id("target_editor_scroll")
-                            .relative()
-                            .child(input::native_input(
-                                self.target_input.focus_handle.clone(),
-                                entity.clone(),
-                            ))
-                            .track_focus(&self.target_input.focus_handle)
-                            .on_mouse_down(MouseButton::Left, {
-                                let focus = self.target_input.focus_handle.clone();
-                                move |_, window, _| focus.focus(window)
-                            })
                             .flex_1()
-                            .p_2()
+                            .min_w(px(0.))
                             .rounded_md()
-                            .bg(Theme::bg_app())
+                            .bg(Theme::bg_card())
                             .border_1()
-                            .border_color(Theme::border_subtle())
-                            .overflow_y_scroll()
-                            .text_sm()
-                            .line_height(px(24.))
-                            .child(if target_text.is_empty() {
-                                div().text_color(Theme::text_muted()).child(if locked {
+                            .border_color(if locked {
+                                Theme::border_subtle()
+                            } else {
+                                Theme::border_accent()
+                            })
+                            .p_3()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .flex()
+                                    .justify_between()
+                                    .items_center()
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap_2()
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .font_weight(FontWeight::BOLD)
+                                                    .text_color(Theme::text_accent())
+                                                    .child("DESTINO"),
+                                            )
+                                            .child(if locked {
+                                                div().text_xs().text_color(Theme::slate()).child(
+                                                    "(Locked - Click Lock button below to unlock)",
+                                                )
+                                            } else {
+                                                div()
+                                            }),
+                                    )
+                                    .child(div().text_xs().text_color(Theme::text_muted()).child(
+                                        format!(
+                                            "{} palabras · {} caracteres",
+                                            editing::words(&target_text),
+                                            target_text.chars().count(),
+                                        ),
+                                    )),
+                            )
+                            .child(
+                                // Target Text Area with Cursor
+                                div()
+                                    .id("target_editor_scroll")
+                                    .relative()
+                                    .child(input::native_input(
+                                        self.target_input.focus_handle.clone(),
+                                        entity.clone(),
+                                    ))
+                                    .track_focus(&self.target_input.focus_handle)
+                                    .on_mouse_down(MouseButton::Left, {
+                                        let focus = self.target_input.focus_handle.clone();
+                                        move |_, window, _| focus.focus(window)
+                                    })
+                                    .flex_1()
+                                    .p_2()
+                                    .rounded_md()
+                                    .bg(Theme::bg_app())
+                                    .border_1()
+                                    .border_color(Theme::border_subtle())
+                                    .overflow_y_scroll()
+                                    .text_sm()
+                                    .line_height(px(24.))
+                                    .child(if target_text.is_empty() {
+                                        div().text_color(Theme::text_muted()).child(if locked {
                                     "This segment is locked from editing."
                                 } else {
                                     "Type translation here... (or insert from TM on the right)"
                                 })
-                            } else {
-                                let before = &target_text[..cursor_pos.min(target_text.len())];
-                                let after = &target_text[cursor_pos.min(target_text.len())..];
+                                    } else {
+                                        let before =
+                                            &target_text[..cursor_pos.min(target_text.len())];
+                                        let after =
+                                            &target_text[cursor_pos.min(target_text.len())..];
+                                        div()
+                                            .flex()
+                                            .flex_row()
+                                            .items_center()
+                                            .flex_wrap()
+                                            .child(inline_text(before))
+                                            .child(div().w(px(2.)).h(px(18.)).bg(Theme::sky()))
+                                            .child(inline_text(after))
+                                    }),
+                            )
+                            .child(
+                                // Action buttons
                                 div()
                                     .flex()
-                                    .flex_row()
                                     .items_center()
-                                    .flex_wrap()
-                                    .child(inline_text(before))
-                                    .child(div().w(px(2.)).h(px(18.)).bg(Theme::sky()))
-                                    .child(inline_text(after))
-                            }),
-                    )
-                    .child(
-                        // Action buttons
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .child(div().flex().items_center().gap_2().child(custom_button(
-                                if locked {
-                                    "🔓 Unlock Segment"
-                                } else {
-                                    "🔒 Lock Segment"
-                                },
-                                ButtonVariant::Secondary,
-                                has_active,
-                                move |_event, _window, cx| {
-                                    entity_lock.update(cx, |this, _cx| {
-                                        this.toggle_active_lock();
-                                    });
-                                },
-                            )))
-                            .child(div().flex().items_center().gap_2().child(custom_button(
-                                "✓ Confirm & Next (Ctrl+Enter)",
-                                ButtonVariant::Success,
-                                has_active && !locked,
-                                move |_event, _window, cx| {
-                                    entity_confirm.update(cx, |this, _cx| {
-                                        this.confirm_and_next();
-                                    });
-                                },
-                            ))),
+                                    .justify_between()
+                                    .child(div().flex().items_center().gap_2().child(
+                                        custom_button(
+                                            if locked { "Desbloquear" } else { "Bloquear" },
+                                            ButtonVariant::Secondary,
+                                            has_active,
+                                            move |_event, _window, cx| {
+                                                entity_lock.update(cx, |this, _cx| {
+                                                    this.toggle_active_lock();
+                                                });
+                                            },
+                                        ),
+                                    ))
+                                    .child(div().flex().items_center().gap_2().child(
+                                        custom_button(
+                                            "Confirmar y avanzar",
+                                            ButtonVariant::Success,
+                                            has_active && !locked,
+                                            move |_event, _window, cx| {
+                                                entity_confirm.update(cx, |this, _cx| {
+                                                    this.confirm_and_next();
+                                                });
+                                            },
+                                        ),
+                                    )),
+                            ),
                     ),
             )
     }

@@ -85,6 +85,75 @@ where
         .child(label)
 }
 
+pub fn history_button<F>(redo: bool, enabled: bool, handler: F) -> impl IntoElement
+where
+    F: Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
+{
+    use gpui::prelude::*;
+    div()
+        .id(if redo { "redo" } else { "undo" })
+        .size(px(30.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded_md()
+        .when(enabled, |d| {
+            d.cursor_pointer()
+                .hover(|s| s.bg(Theme::bg_hover()))
+                .on_mouse_down(MouseButton::Left, handler)
+        })
+        .tooltip(move |_, cx| cx.new(move |_| HistoryTooltip(redo)).into())
+        .child(
+            canvas(
+                |_, _, _| (),
+                move |bounds, _, window, _| {
+                    let at = |x: f32, y: f32| {
+                        bounds.origin + point(px(if redo { 18. - x } else { x }), px(y))
+                    };
+                    let mut path = PathBuilder::stroke(px(1.7));
+                    path.move_to(at(7., 3.));
+                    path.line_to(at(3., 7.));
+                    path.line_to(at(7., 11.));
+                    path.move_to(at(3., 7.));
+                    path.line_to(at(10., 7.));
+                    path.curve_to(at(15., 12.), at(15., 7.));
+                    path.curve_to(at(10., 16.), at(15., 16.));
+                    path.line_to(at(7., 16.));
+                    if let Ok(path) = path.build() {
+                        window.paint_path(
+                            path,
+                            if enabled {
+                                Theme::text_secondary()
+                            } else {
+                                Theme::text_muted()
+                            },
+                        );
+                    }
+                },
+            )
+            .size(px(18.)),
+        )
+}
+
+struct HistoryTooltip(bool);
+
+impl Render for HistoryTooltip {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .px_2()
+            .py_1()
+            .rounded_md()
+            .bg(Theme::bg_surface())
+            .text_color(Theme::text_primary())
+            .text_xs()
+            .child(if self.0 {
+                "Rehacer · Ctrl+Y"
+            } else {
+                "Deshacer · Ctrl+Z"
+            })
+    }
+}
+
 pub fn status_badge(state: SegmentState, locked: bool) -> Div {
     let base = div()
         .flex()

@@ -11,13 +11,17 @@ Desde `C:/Proyectos/LumenCAT`, `cargo run --locked --release --bin lumencat`. El
 `cargo run --locked` abre GPUI. Para la interfaz anterior: `cargo run --locked -- --legacy-egui`. Ambas aceptan `--project C:/ruta/proyecto.lcat`.
 
 - Abre/crea un proyecto, importa documentos con los botones del encabezado y selecciona un documento en la barra lateral. Los proyectos nuevos GPUI usan en→es; los documentos existentes conservan su par.
-- Clic en una fila o ↑/↓ para navegar; el destino recibe foco. La fila activa se mantiene visible. Ctrl+Enter confirma y avanza, Alt+C copia el origen y Ctrl+L bloquea/desbloquea.
+- Origen y destino aparecen en paralelo, con memoria y QA a la derecha. La barra usa flechas compactas para deshacer/rehacer; sus nombres y atajos aparecen al pasar el ratón. Importar/exportar TMX está bajo «Memoria».
+- Clic en una fila o Ctrl+↑/↓ para navegar; el destino recibe foco. Ctrl+Enter confirma y avanza; Ctrl+Alt+Enter confirma sin avanzar. Ctrl+Insert o Alt+Insert copia el origen; Ctrl+L bloquea/desbloquea. Se conservan ↑/↓, Alt+↑/↓ y Alt+C como alternativas.
+- Ctrl+T aplica la primera coincidencia TM; Ctrl+1…9 aplica la coincidencia correspondiente. F3 busca concordancias del destino seleccionado completo o, en su defecto, del origen; con el foco en búsqueda usa esa consulta. Ctrl+S guarda; Shift+F12 abre la exportación cuando no hay cambios pendientes.
 - Ctrl+, o Ctrl+Alt+flecha inserta la siguiente etiqueta `<g>`, `</g>` o `<x/>` que falta. Los badges son representación del texto; no amplían el subset XLIFF/DOCX del importador.
 - Ctrl+F busca en origen/destino, con alcance de segmento o documento. Ctrl+H abre reemplazo literal, sensible a mayúsculas, solo en destinos. El reemplazo de documento es transaccional, ignora segmentos bloqueados y conserva tags. Ctrl+Z/Y deshace/rehace cada segmento del historial.
-- El progreso cuenta destinos no vacíos en todo el documento; no equivale a confirmación ni QA aprobada. Clic en la barra va al primer pendiente cargado. El editor muestra palabras, caracteres Unicode y margen en bytes del límite UTF-8 de 1 MiB. El porcentaje TM aplicado se muestra durante la sesión; no se persiste como metadata.
+- El progreso cuenta destinos no vacíos en todo el documento; no equivale a confirmación ni QA aprobada. Clic en la barra va al primer pendiente cargado. El editor muestra palabras y caracteres Unicode; el límite UTF-8 sigue siendo 1 MiB. El porcentaje TM aplicado se muestra durante la sesión; no se persiste como metadata.
 - Autoguardado periódico sin otra pulsación. El cierre espera el commit y el cierre del worker; un error impide cerrar para conservar el borrador. La recuperación TXT mediante diálogo pertenece a la interfaz anterior.
 
 GPUI aún no virtualiza el grid completo ni tiene navegación de cursor con clic/selección parcial por ratón. El puente de entrada nativa está conectado; no se afirma validación completa de IME, RTL o accesibilidad. La tabla bilingüe representa segmentos, no el diseño visual de Word.
+
+Los atajos principales se basan en el [perfil predeterminado documentado por RWS](https://www.trados.com/media/images/translate-file-in-10-easy-steps-2022-rws-en-1_tcm234-213936.pdf). No hay paridad completa con Trados: confirmar todavía avanza al segmento siguiente y no actualiza automáticamente la TM; QuickPlace inserta el siguiente tag, sin desplegar candidatos. Terminología, corrección ortográfica y configuración de atajos siguen pendientes.
 
 ## Flujo de la interfaz anterior
 

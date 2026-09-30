@@ -123,12 +123,12 @@ fn word_roundtrip_merges_same_style_text_across_runs() -> Result<(), Box<dyn std
     let dir = tempfile::tempdir()?;
     let input = dir.path().join("split-runs.docx");
     let xml = document(
-        "<w:p><w:r><w:rPr><w:b/></w:rPr><w:t>Hello </w:t><w:t>42.</w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t> again.</w:t></w:r></w:p>",
+        "<w:p><w:pPr><w:rPr><w:b/></w:rPr></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t>Hello&#x26; </w:t><w:t>42.</w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t> again.</w:t></w:r></w:p>",
     );
     package(&input, &xml, &[])?;
     let cancel = Cancellation::default();
     let imported = import_docx(&input, "en", "es", &cancel)?;
-    assert_eq!(imported.segments[0].source, "Hello 42. again.");
+    assert_eq!(imported.segments[0].source, "Hello& 42. again.");
 
     let output = serialize_docx(&imported, &["Hola 42. de nuevo.".into()], &cancel)?;
     let output_path = dir.path().join("translated.docx");
@@ -138,8 +138,47 @@ fn word_roundtrip_merges_same_style_text_across_runs() -> Result<(), Box<dyn std
         "Hola 42. de nuevo."
     );
     let output_xml = String::from_utf8(part(&output, "word/document.xml")?)?;
-    assert_eq!(output_xml.matches("<w:rPr><w:b/></w:rPr>").count(), 2);
+    assert_eq!(output_xml.matches("<w:rPr><w:b/></w:rPr>").count(), 3);
+    assert!(output_xml.contains("<w:pPr><w:rPr><w:b/></w:rPr></w:pPr>"));
     assert_eq!(output_xml.matches("<w:t").count(), 1);
+    Ok(())
+}
+
+#[test]
+fn rejects_xml_10_disallowed_controls_in_word_sources_and_targets()
+-> Result<(), Box<dyn std::error::Error>> {
+    let dir = tempfile::tempdir()?;
+    let input = dir.path().join("controls.docx");
+    for character in ["&#x1;", "&#x1f;"] {
+        package(
+            &input,
+            &document(&format!(
+                "<w:p><w:r><w:t>bad{character}text</w:t></w:r></w:p>"
+            )),
+            &[],
+        )?;
+        assert!(
+            import_docx(&input, "en", "es", &Cancellation::default()).is_err(),
+            "invalid XML 1.0 control {character}"
+        );
+    }
+
+    package(
+        &input,
+        &document("<w:p><w:r><w:t>valid</w:t></w:r></w:p>"),
+        &[],
+    )?;
+    let imported = import_docx(&input, "en", "es", &Cancellation::default())?;
+    for character in ['\u{1}', '\u{1f}'] {
+        assert!(
+            serialize_docx(
+                &imported,
+                &[format!("bad{character}text")],
+                &Cancellation::default()
+            )
+            .is_err()
+        );
+    }
     Ok(())
 }
 

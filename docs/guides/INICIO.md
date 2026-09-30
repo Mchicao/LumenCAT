@@ -17,7 +17,7 @@ Desde `C:/Proyectos/LumenCAT`, `cargo run --locked --release --bin lumencat`. El
 
 ## DOCX / Microsoft Word
 
-DOCX OOXML Transitional, párrafos en cuerpo y celdas, con varios fragmentos/runs únicamente cuando su formato inline es idéntico; admite estilos de párrafo y tablas simples. Conserva bytes de otras partes (styles, numbering, media, relaciones). Rechaza formato mixto, campos, tracked changes, hyperlinks, content controls, macros/OLE, saltos/tabulaciones, texto en stories secundarias y relaciones ambiguas o rotas. Muchos documentos Word reales quedan fuera de este subset: el editor de tags/runs de M2 es requisito para ampliarlo con fidelidad.
+DOCX OOXML Transitional, párrafos en cuerpo y celdas, con varios fragmentos/runs únicamente cuando su formato inline es idéntico; admite estilos de párrafo y formato del párrafo, además de tablas simples. Decodifica referencias XML y conserva bytes de otras partes (styles, numbering, media, relaciones). Rechaza formato mixto, campos, tracked changes, hyperlinks, content controls, macros/OLE, saltos/tabulaciones, texto en stories secundarias y relaciones ambiguas o rotas. Muchos documentos Word reales quedan fuera de este subset: el editor de tags/runs de M2 es requisito para ampliarlo con fidelidad.
 
 CR/LF/TAB no se convierten silenciosamente a espacios en Word: export rechazado. Namespace alternativo de Word/OPC y Strict todavía no soportados. No existe preview Word ni validación visual real. Round-trip propio y preservación ZIP no prueban por sí solos render equivalente en Microsoft Word.
 

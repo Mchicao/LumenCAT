@@ -19,3 +19,9 @@ Fusionar todas las pasadas XML podría ahorrar líneas, pero no hay medida que j
 ## Defectos de rendimiento reproducidos
 
 Recuperación OR inicial perdió candidato específico y concordancia p95 llegó a750ms en10k. Test rojo reprodujo pérdida; routes raras+CROSS JOIN la corrigieron. Frecuencia exacta de términos comunes escaló fuzzy p95 a226ms en3M; contador saturado de512 ocurrencias vía fts5vocab instance limita ese trabajo, sin alterar scoring ni llamar exact a texto normalizado diferente. CSV iniciales y finales permiten comparar. Recall probado es un caso sintético, no corpus exhaustivo.
+
+## DOCX: revisión adversarial GLM-5.3 Max, 30-09-2026
+
+La segunda pasada limitada al workspace encontró una lectura doble de `word/document.xml`, un `replace` CRLF sin efecto porque los saltos se rechazan, un límite de lectura vulnerable a crecimiento concurrente, rechazo de `w:pPr/w:rPr` (formato de la marca de párrafo) y decodificación incompleta de referencias numéricas en `w:t`. Corregidos: una sola validación por parte XML, lectura DOCX con `take(MAX_TOTAL + 1)`, tolerancia de formato de marca del párrafo y decodificación a través del helper XML compartido. Se añadió round-trip con varios `w:t`/runs del mismo formato, `w:pPr/w:rPr`, referencias numéricas, rechazo de formato mixto y caracteres XML 1.0 realmente inválidos. Se mantiene el rechazo explícito de formato mixto hasta tener códigos inline protegidos.
+
+El revisor reportó que U+0085/U+009F eran caracteres XML 1.0 inválidos. Se verificó contra la producción normativa [`Char`](https://www.w3.org/TR/xml/#charsets): ambos están dentro del rango permitido U+0020–U+D7FF (aunque algunas franjas de control se desaconsejan), así que se descartó ese finding; las pruebas cubren U+0001/U+001F, que sí son ilegales. La revisión no abrió archivos con Word y no sustituye una comprobación de interoperabilidad real.

@@ -260,10 +260,21 @@ impl CatApp {
                 }
                 Ok(data) => match data {
                     Data::Progress(_, _, _) => {}
-                    Data::Opened(recovered, docs) => {
+                    Data::Opened(recovered, docs, settings, backup) => {
                         self.opened = true;
                         self.documents = docs;
+                        self.source_lang = settings.source_lang;
+                        self.target_lang = settings.target_lang;
                         self.message = if recovered { "Se recuperó un cierre no limpio. SQLite validó la base; revisa el último segmento." } else { "Proyecto local abierto. Los cambios se guardan de forma transaccional." }.into();
+                        if let Some(backup) = backup {
+                            self.message =
+                                format!("Proyecto migrado con respaldo en {}", backup.display());
+                        }
+                    }
+                    Data::Settings(settings) => {
+                        self.source_lang = settings.source_lang;
+                        self.target_lang = settings.target_lang;
+                        self.message = "Idiomas de importación guardados".into();
                     }
                     Data::Documents(docs) => {
                         self.documents = docs;
@@ -525,6 +536,21 @@ impl eframe::App for CatApp {
                 ui.add(egui::TextEdit::singleline(&mut self.source_lang).desired_width(45.0));
                 ui.label("Destino");
                 ui.add(egui::TextEdit::singleline(&mut self.target_lang).desired_width(45.0));
+                if ui
+                    .add_enabled(
+                        self.opened && !self.busy() && !self.dirty(),
+                        egui::Button::new("Guardar idiomas"),
+                    )
+                    .clicked()
+                {
+                    self.send(
+                        Task::SetSettings(ProjectSettings {
+                            source_lang: self.source_lang.clone(),
+                            target_lang: self.target_lang.clone(),
+                        }),
+                        Pending::Operation,
+                    );
+                }
                 ui.add(
                     egui::TextEdit::singleline(&mut self.file_path)
                         .desired_width(380.0)
@@ -652,10 +678,6 @@ impl eframe::App for CatApp {
                     }
                 }
                 if let Some(id) = selected {
-                    if let Some(doc) = self.documents.iter().find(|d| d.id == id) {
-                        self.source_lang = doc.source_lang.clone();
-                        self.target_lang = doc.target_lang.clone();
-                    }
                     self.document = Some(id);
                     self.active = None;
                     self.matches.clear();

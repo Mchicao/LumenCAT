@@ -93,6 +93,11 @@ pub fn import_document(
     cancel: &Cancellation,
 ) -> Result<ImportedDocument> {
     cancel.check()?;
+    ProjectSettings {
+        source_lang: source_lang.into(),
+        target_lang: target_lang.into(),
+    }
+    .validate()?;
     if fs::metadata(path)?.len() > MAX_DOCUMENT {
         return Err(invalid("documento supera límite de 256 MiB"));
     }
@@ -123,7 +128,7 @@ pub fn import_document(
         ),
         "xlf" | "xliff" => (
             DocumentFormat::Xliff12,
-            xliff(text, cancel)?
+            xliff_with_languages(text, cancel, Some((source_lang, target_lang)))?
                 .into_iter()
                 .map(|u| u.segment)
                 .collect(),
@@ -181,6 +186,13 @@ struct XUnit {
     target_name: String,
 }
 fn xliff(text: &str, cancel: &Cancellation) -> Result<Vec<XUnit>> {
+    xliff_with_languages(text, cancel, None)
+}
+fn xliff_with_languages(
+    text: &str,
+    cancel: &Cancellation,
+    languages: Option<(&str, &str)>,
+) -> Result<Vec<XUnit>> {
     if text.chars().any(|c| !xml_char(c)) {
         return Err(invalid("carácter XML inválido"));
     }
@@ -245,6 +257,21 @@ fn xliff(text: &str, cancel: &Cancellation) -> Result<Vec<XUnit>> {
                     ));
                 }
                 if lname == b"file" {
+                    if let Some((source, target)) = languages {
+                        for (attribute, configured) in [
+                            (b"source-language".as_slice(), source),
+                            (b"target-language".as_slice(), target),
+                        ] {
+                            if let Some(declared) = attr(s, attribute)?
+                                && !declared.eq_ignore_ascii_case(configured)
+                            {
+                                return Err(invalid(format!(
+                                    "Conflicto de idioma XLIFF: {} declara {declared}, configurado {configured}. Elige el par del archivo y vuelve a importar; no se relabelan datos.",
+                                    String::from_utf8_lossy(attribute)
+                                )));
+                            }
+                        }
+                    }
                     if stack.iter().any(|n| local(n) == b"file") {
                         return Err(invalid("file XLIFF anidado"));
                     }

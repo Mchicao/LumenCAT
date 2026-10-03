@@ -5,13 +5,17 @@ use rusqlite::{
 };
 use std::path::{Path, PathBuf};
 
-pub(super) const VERSION: i64 = 2;
+pub(super) const VERSION: i64 = 3;
 pub(super) const V2: &str = "
 CREATE TABLE operations(id INTEGER PRIMARY KEY);
 INSERT INTO operations SELECT id FROM history ORDER BY id;
 ALTER TABLE history ADD COLUMN operation_id INTEGER REFERENCES operations(id);
 UPDATE history SET operation_id=id;
 CREATE INDEX history_operation ON history(operation_id,id);
+";
+pub(super) const V3: &str = "
+CREATE TABLE settings(id INTEGER PRIMARY KEY CHECK(id=1),source_lang TEXT NOT NULL,target_lang TEXT NOT NULL);
+INSERT INTO settings SELECT 1,coalesce((SELECT source_lang FROM documents ORDER BY id LIMIT 1),'en'),coalesce((SELECT target_lang FROM documents ORDER BY id LIMIT 1),'es');
 ";
 
 pub(super) fn integrity(connection: &Connection) -> Result<()> {
@@ -73,14 +77,10 @@ pub(super) fn migrate(connection: &mut Connection, path: &Path, version: i64) ->
     let (_, backup_path) = backup.keep().map_err(|error| CatError::Io(error.error))?;
     tracing::info!(event = "migration_backup_created", version, backup = %backup_path.display());
     let tx = connection.transaction()?;
-    match version {
-        1 => tx.execute_batch(V2)?,
-        _ => {
-            return Err(CatError::Invalid(
-                "No existe una migración para esta versión".into(),
-            ));
-        }
+    if version < 2 {
+        tx.execute_batch(V2)?;
     }
+    tx.execute_batch(V3)?;
     tx.pragma_update(None, "user_version", VERSION)?;
     if counts != self::counts(&tx)? {
         return Err(CatError::Invalid(

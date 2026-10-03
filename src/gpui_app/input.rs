@@ -21,6 +21,10 @@ impl LumenCatApp {
             &self.search_input
         } else if self.replacement_input.focus_handle.is_focused(window) {
             &self.replacement_input
+        } else if self.source_language_input.focus_handle.is_focused(window) {
+            &self.source_language_input
+        } else if self.target_language_input.focus_handle.is_focused(window) {
+            &self.target_language_input
         } else {
             &self.target_input
         }
@@ -30,6 +34,10 @@ impl LumenCatApp {
             &mut self.search_input
         } else if self.replacement_input.focus_handle.is_focused(window) {
             &mut self.replacement_input
+        } else if self.source_language_input.focus_handle.is_focused(window) {
+            &mut self.source_language_input
+        } else if self.target_language_input.focus_handle.is_focused(window) {
+            &mut self.target_language_input
         } else {
             &mut self.target_input
         }
@@ -41,7 +49,9 @@ impl LumenCatApp {
         window: &Window,
     ) -> Option<Range<usize>> {
         let target = !self.search_input.focus_handle.is_focused(window)
-            && !self.replacement_input.focus_handle.is_focused(window);
+            && !self.replacement_input.focus_handle.is_focused(window)
+            && !self.source_language_input.focus_handle.is_focused(window)
+            && !self.target_language_input.focus_handle.is_focused(window);
         if target && self.active_draft.as_ref().is_none_or(|a| a.segment.locked) {
             return None;
         }

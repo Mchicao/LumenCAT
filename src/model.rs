@@ -137,6 +137,42 @@ pub struct EditCommand {
     pub locked: bool,
     pub origin: Origin,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectSettings {
+    pub source_lang: String,
+    pub target_lang: String,
+}
+
+impl ProjectSettings {
+    pub fn validate(&self) -> Result<()> {
+        validate_language(&self.source_lang)?;
+        validate_language(&self.target_lang)?;
+        if self.source_lang.eq_ignore_ascii_case(&self.target_lang) {
+            return Err(CatError::Invalid(
+                "Elige idiomas de origen y destino diferentes".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+pub fn validate_language(language: &str) -> Result<()> {
+    let mut subtags = language.split('-');
+    let primary = subtags.next().unwrap_or_default();
+    if language.len() > 63
+        || !(2..=8).contains(&primary.len())
+        || !primary.bytes().all(|b| b.is_ascii_alphabetic())
+        || subtags.any(|part| {
+            part.is_empty() || part.len() > 8 || !part.bytes().all(|b| b.is_ascii_alphanumeric())
+        })
+    {
+        return Err(CatError::Invalid(
+            "Idioma inválido: usa un código como fr, es, pt-BR o zh-Hant".into(),
+        ));
+    }
+    Ok(())
+}
 #[derive(Debug, Clone)]
 pub struct TmUnit {
     pub source: String,

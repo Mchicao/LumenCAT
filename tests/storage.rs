@@ -255,3 +255,53 @@ fn backup_includes_wal_and_recovery_never_overwrites() -> Result<()> {
     assert!(!missing.exists());
     Ok(())
 }
+
+#[test]
+fn project_languages_persist_without_relabelling_documents() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("languages.lcat");
+    let mut store = ProjectStore::open(&path)?;
+    let settings = ProjectSettings {
+        source_lang: "fr".into(),
+        target_lang: "es".into(),
+    };
+    store.set_settings(&settings)?;
+    for source in ["", "fr--CA", "../fr", "fr\nes", "x", "fr_FR"] {
+        assert!(
+            store
+                .set_settings(&ProjectSettings {
+                    source_lang: source.into(),
+                    target_lang: "es".into()
+                })
+                .is_err()
+        );
+    }
+    let source = dir.path().join("french.txt");
+    std::fs::write(&source, "Bonjour\r\n")?;
+    let imported = lumencat::formats::import_document(
+        &source,
+        &settings.source_lang,
+        &settings.target_lang,
+        &Cancellation::default(),
+    )?;
+    let id = store.import_document(&imported, &Cancellation::default())?;
+    let row = store.page(id, 0, 1, "")?.remove(0);
+    store.edit(&edit(&row, "Hola", false))?;
+    let doc = store.load_document(id)?;
+    let output = dir.path().join("spanish.txt");
+    lumencat::formats::export_document(&doc, &["Hola".into()], &output, &Cancellation::default())?;
+    assert_eq!(std::fs::read_to_string(output)?, "Hola\r\n");
+    store.set_settings(&ProjectSettings {
+        source_lang: "pt-BR".into(),
+        target_lang: "pt-PT".into(),
+    })?;
+    store.close()?;
+    drop(store);
+    let mut reopened = ProjectStore::open_existing(&path)?;
+    assert_eq!(reopened.settings()?.source_lang, "pt-BR");
+    assert_eq!(reopened.settings()?.target_lang, "pt-PT");
+    assert_eq!(reopened.documents()?[0].source_lang, "fr");
+    assert_eq!(reopened.segment(row.id)?.target, "Hola");
+    reopened.close()?;
+    Ok(())
+}

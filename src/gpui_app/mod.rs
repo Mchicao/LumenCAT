@@ -6,7 +6,8 @@ pub mod theme;
 
 use crate::{
     model::{
-        Cancellation, DocumentInfo, EditCommand, Origin, QaIssue, Segment, SegmentState, TmMatch,
+        Cancellation, DocumentInfo, EditCommand, Origin, ProjectSettings, QaIssue, Segment,
+        SegmentState, TmMatch,
     },
     worker::{Data as WorkerData, Reply, Request, Task as WorkerTask},
 };
@@ -91,6 +92,8 @@ pub struct LumenCatApp {
     pub current_document_id: Option<i64>,
     pub source_lang: String,
     pub target_lang: String,
+    pub source_language_input: InputModel,
+    pub target_language_input: InputModel,
 
     // Grid data
     pub rows: BTreeMap<usize, Segment>,
@@ -147,6 +150,8 @@ impl LumenCatApp {
             current_document_id: None,
             source_lang: "en".into(),
             target_lang: "es".into(),
+            source_language_input: InputModel::new("Origen (fr, en...)", cx),
+            target_language_input: InputModel::new("Destino (es, pt-BR...)", cx),
             rows: BTreeMap::new(),
             requested_pages: Vec::new(),
             active_draft: None,
@@ -565,7 +570,7 @@ impl LumenCatApp {
             .add_filter("Plain Text", &["txt"])
             .pick_file()
         {
-            let (sl, tl) = self.document_languages();
+            let (sl, tl) = (self.source_lang.clone(), self.target_lang.clone());
             let cancel = Cancellation::default();
             if self.send(
                 WorkerTask::Import(path, sl, tl, cancel.clone()),
@@ -575,6 +580,19 @@ impl LumenCatApp {
                 self.message = "Importing document...".into();
             }
         }
+    }
+
+    pub fn save_project_languages(&mut self) {
+        if !self.opened || self.is_busy() || self.is_dirty() {
+            return;
+        }
+        self.send(
+            WorkerTask::SetSettings(ProjectSettings {
+                source_lang: self.source_language_input.text.clone(),
+                target_lang: self.target_language_input.text.clone(),
+            }),
+            PendingOp::Operation,
+        );
     }
 
     pub fn import_tmx_dialog(&mut self) {
@@ -676,7 +694,7 @@ impl LumenCatApp {
                 self.message = format!("{error}. Unsaved text remains in the editor.");
             }
             Ok(data) => match data {
-                WorkerData::Opened(recovered, docs) => {
+                WorkerData::Opened(recovered, docs, settings, backup) => {
                     self.opened = true;
                     self.save_error = false;
                     self.active_draft = None;
@@ -686,10 +704,14 @@ impl LumenCatApp {
                     self.applied_tm.clear();
                     self.invalidate();
                     self.documents = docs;
+                    self.source_lang = settings.source_lang;
+                    self.target_lang = settings.target_lang;
+                    self.source_language_input
+                        .set_text(self.source_lang.clone());
+                    self.target_language_input
+                        .set_text(self.target_lang.clone());
                     if let Some(first_doc) = self.documents.first().cloned() {
                         self.current_document_id = Some(first_doc.id);
-                        self.source_lang = first_doc.source_lang;
-                        self.target_lang = first_doc.target_lang;
                         self.invalidate();
                         self.navigate_to(PendingNav::Ordinal(first_doc.id, 0));
                     }
@@ -699,6 +721,19 @@ impl LumenCatApp {
                         "Local project opened. Changes are saved transactionally."
                     }
                     .into();
+                    if let Some(backup) = backup {
+                        self.message =
+                            format!("Proyecto migrado con respaldo en {}", backup.display());
+                    }
+                }
+                WorkerData::Settings(settings) => {
+                    self.source_lang = settings.source_lang;
+                    self.target_lang = settings.target_lang;
+                    self.source_language_input
+                        .set_text(self.source_lang.clone());
+                    self.target_language_input
+                        .set_text(self.target_lang.clone());
+                    self.message = "Idiomas guardados para próximas importaciones; los documentos existentes no cambian".into();
                 }
                 WorkerData::Documents(docs) => {
                     self.documents = docs;
@@ -706,8 +741,6 @@ impl LumenCatApp {
                         && let Some(first_doc) = self.documents.first().cloned()
                     {
                         self.current_document_id = Some(first_doc.id);
-                        self.source_lang = first_doc.source_lang;
-                        self.target_lang = first_doc.target_lang;
                         self.invalidate();
                         self.navigate_to(PendingNav::Ordinal(first_doc.id, 0));
                     }
@@ -837,7 +870,17 @@ impl Render for LumenCatApp {
                 let ks = &event.keystroke;
                 let search = this.search_input.focus_handle.is_focused(window);
                 let replacement = this.replacement_input.focus_handle.is_focused(window);
-                if ks.modifiers.control && matches!(ks.key.as_str(), "f" | "h") {
+                let source_language = this.source_language_input.focus_handle.is_focused(window);
+                let target_language = this.target_language_input.focus_handle.is_focused(window);
+                if source_language || target_language {
+                    if ks.key == "enter" {
+                        this.save_project_languages();
+                    } else if source_language {
+                        this.source_language_input.handle_key(event, cx);
+                    } else {
+                        this.target_language_input.handle_key(event, cx);
+                    }
+                } else if ks.modifiers.control && matches!(ks.key.as_str(), "f" | "h") {
                     this.show_replace = ks.key == "h";
                     this.search_input.focus_handle.focus(window);
                 } else if ks.key == "escape" {
@@ -1149,6 +1192,39 @@ impl LumenCatApp {
             .flex_col()
             .child(
                 div()
+                    .p_3()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(div().text_sm().child("Idiomas de importación"))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(Theme::text_secondary())
+                            .child("Origen"),
+                    )
+                    .child(input_field(&self.source_language_input, entity.clone()))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(Theme::text_secondary())
+                            .child("Destino"),
+                    )
+                    .child(input_field(&self.target_language_input, entity.clone()))
+                    .child(custom_button(
+                        "Guardar idiomas",
+                        ButtonVariant::Secondary,
+                        self.opened && !is_busy && !is_dirty,
+                        {
+                            let entity = entity.clone();
+                            move |_, _, cx| {
+                                entity.update(cx, |this, _| this.save_project_languages());
+                            }
+                        },
+                    )),
+            )
+            .child(
+                div()
                     .px_3()
                     .py_2p5()
                     .border_b_1()
@@ -1215,8 +1291,6 @@ impl LumenCatApp {
                                     .unwrap_or_else(|| "doc".into());
 
                                 let entity_cb = entity.clone();
-                                let click_sl = doc_sl.clone();
-                                let click_tl = doc_tl.clone();
                                 div()
                                     .p_2p5()
                                     .rounded_md()
@@ -1235,12 +1309,8 @@ impl LumenCatApp {
                                     .hover(|s| s.bg(Theme::bg_hover()))
                                     .on_mouse_down(MouseButton::Left, move |_event, _window, cx| {
                                         if !is_busy && !is_dirty {
-                                            let sl = click_sl.clone();
-                                            let tl = click_tl.clone();
                                             entity_cb.update(cx, |this, _cx| {
                                                 this.current_document_id = Some(doc_id);
-                                                this.source_lang = sl;
-                                                this.target_lang = tl;
                                                 this.invalidate();
                                                 this.refresh_progress();
                                                 this.navigate_to(PendingNav::Ordinal(doc_id, 0));

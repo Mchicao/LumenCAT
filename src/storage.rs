@@ -98,6 +98,7 @@ impl ProjectStore {
             let tx = connection.transaction()?;
             tx.execute_batch(SCHEMA)?;
             tx.execute_batch(migrations::V2)?;
+            tx.execute_batch(migrations::V3)?;
             tx.pragma_update(None, "application_id", APPLICATION_ID)?;
             tx.pragma_update(None, "user_version", migrations::VERSION)?;
             tx.commit()?;
@@ -159,12 +160,38 @@ impl ProjectStore {
             )
             .collect()
     }
+    pub fn settings(&self) -> Result<ProjectSettings> {
+        Ok(self.connection.query_row(
+            "SELECT source_lang,target_lang FROM settings WHERE id=1",
+            [],
+            |row| {
+                Ok(ProjectSettings {
+                    source_lang: row.get(0)?,
+                    target_lang: row.get(1)?,
+                })
+            },
+        )?)
+    }
+    pub fn set_settings(&mut self, settings: &ProjectSettings) -> Result<ProjectSettings> {
+        self.writable()?;
+        settings.validate()?;
+        self.connection.execute(
+            "UPDATE settings SET source_lang=?1,target_lang=?2 WHERE id=1",
+            params![settings.source_lang, settings.target_lang],
+        )?;
+        self.settings()
+    }
     pub fn import_document(
         &mut self,
         document: &ImportedDocument,
         cancel: &Cancellation,
     ) -> Result<i64> {
         self.writable()?;
+        ProjectSettings {
+            source_lang: document.source_lang.clone(),
+            target_lang: document.target_lang.clone(),
+        }
+        .validate()?;
         cancel.check()?;
         let tx = self.connection.transaction()?;
         let original_path = document

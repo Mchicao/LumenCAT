@@ -14,6 +14,7 @@ use std::{
 
 pub enum Task {
     Open(PathBuf),
+    SetSettings(ProjectSettings),
     Import(PathBuf, String, String, Cancellation),
     Page(i64, usize, String),
     Search(i64, usize, String, Cancellation),
@@ -34,7 +35,8 @@ pub enum Task {
     RecoverText(PathBuf, String, Cancellation),
 }
 pub enum Data {
-    Opened(bool, Vec<DocumentInfo>),
+    Opened(bool, Vec<DocumentInfo>, ProjectSettings, Option<PathBuf>),
+    Settings(ProjectSettings),
     Documents(Vec<DocumentInfo>),
     Page(Vec<Segment>),
     Selected(Segment),
@@ -127,14 +129,20 @@ fn run(store: &mut Option<ProjectStore>, task: Task) -> Result<Data> {
         let opened = ProjectStore::open(&path)?;
         let recovered = opened.recovered;
         let documents = opened.documents()?;
+        let settings = opened.settings()?;
+        let backup = opened.migration_backup.clone();
+        if let Some(previous) = store.as_mut() {
+            previous.close()?;
+        }
         *store = Some(opened);
-        return Ok(Data::Opened(recovered, documents));
+        return Ok(Data::Opened(recovered, documents, settings, backup));
     }
     let db = store
         .as_mut()
         .ok_or_else(|| CatError::Invalid("Abre un proyecto primero".into()))?;
     match task {
         Task::Open(_) => Err(CatError::Invalid("Solicitud interna inválida".into())),
+        Task::SetSettings(settings) => Ok(Data::Settings(db.set_settings(&settings)?)),
         Task::Import(path, source, target, cancel) => {
             let document = formats::import_document(&path, &source, &target, &cancel)?;
             db.import_document(&document, &cancel)?;

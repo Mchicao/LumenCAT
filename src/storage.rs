@@ -2,6 +2,7 @@
 use crate::{formats, model::*, tm};
 use rusqlite::{Connection, params};
 mod migrations;
+mod terminology;
 use std::{
     fs::{File, OpenOptions},
     io::{BufReader, BufWriter, Write},
@@ -100,6 +101,7 @@ impl ProjectStore {
             tx.execute_batch(migrations::V2)?;
             tx.execute_batch(migrations::V3)?;
             tx.execute_batch(migrations::V4)?;
+            tx.execute_batch(migrations::V5)?;
             tx.pragma_update(None, "application_id", APPLICATION_ID)?;
             tx.pragma_update(None, "user_version", migrations::VERSION)?;
             tx.commit()?;
@@ -932,17 +934,20 @@ mod migration_tests {
     }
 
     #[test]
-    fn v2_and_v3_migrate_language_variants_without_losing_units() -> Result<()> {
+    fn v2_v3_and_v4_migrate_language_variants_without_losing_units() -> Result<()> {
         let directory = tempfile::tempdir()?;
-        for version in [2, 3] {
+        for version in [2, 3, 4] {
             let path = directory.path().join(format!("v{version}.lcat"));
             let connection = v1(&path)?;
             connection.execute_batch(migrations::V2)?;
-            if version == 3 {
+            if version >= 3 {
                 connection.execute_batch(migrations::V3)?;
             }
             connection.pragma_update(None, "user_version", version)?;
             connection.execute("INSERT INTO tm(source,target,source_lang,target_lang,normalized,chars,raw_xml) VALUES('Hello','Otra importada','EN','ES','Hello',5,'')", [])?;
+            if version == 4 {
+                connection.execute_batch(migrations::V4)?;
+            }
             let mut store = ProjectStore::open_existing(&path)?;
             let backup = store
                 .migration_backup
@@ -956,6 +961,7 @@ mod migration_tests {
             assert_eq!(store.matches("Hello", "en", "es")?.len(), 2);
             assert_eq!(store.settings()?.source_lang, "en");
             assert_eq!(store.segment(1)?.target, "Café 世界 🙂");
+            assert!(store.term_bases()?.is_empty());
             store.redo()?;
             assert_eq!(store.segment(1)?.target, "otra variante");
             store.close()?;

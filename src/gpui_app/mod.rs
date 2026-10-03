@@ -2,12 +2,14 @@ pub mod components;
 pub use crate::editing;
 mod input;
 pub mod runtime;
+mod terminology;
 pub mod theme;
 
 use crate::{
     model::{
         Cancellation, ConfirmationIntent, DocumentInfo, EditCommand, LearningOutcome,
-        MemoryCollection, Origin, ProjectSettings, QaIssue, Segment, SegmentState, TmMatch,
+        MemoryCollection, Origin, ProjectSettings, QaIssue, Segment, SegmentState, TermBase,
+        TermStatus, TerminologyResult, TmMatch,
     },
     worker::{Data as WorkerData, Reply, Request, Task as WorkerTask},
 };
@@ -26,6 +28,7 @@ use theme::Theme;
 pub enum RightTab {
     TranslationMemory,
     QualityAssurance,
+    Terminology,
 }
 
 pub struct DraftState {
@@ -101,6 +104,16 @@ pub struct LumenCatApp {
     pub memory_name_input: InputModel,
     pub memories: Vec<MemoryCollection>,
     pub write_memory_id: Option<i64>,
+    term_bases: Vec<TermBase>,
+    selected_term_base: Option<i64>,
+    term_base_name_input: InputModel,
+    term_source_input: InputModel,
+    term_target_input: InputModel,
+    term_notes_input: InputModel,
+    term_target_status: TermStatus,
+    term_case_sensitive: bool,
+    show_term_form: bool,
+    terminology_result: Option<TerminologyResult>,
 
     // Grid data
     pub rows: BTreeMap<usize, Segment>,
@@ -180,6 +193,16 @@ impl LumenCatApp {
             memory_name_input: InputModel::new("Nombre de memoria", cx),
             memories: Vec::new(),
             write_memory_id: None,
+            term_bases: Vec::new(),
+            selected_term_base: None,
+            term_base_name_input: InputModel::new("Nombre de base terminológica", cx),
+            term_source_input: InputModel::new("Término de origen", cx),
+            term_target_input: InputModel::new("Equivalencia de destino", cx),
+            term_notes_input: InputModel::new("Notas (opcional)", cx),
+            term_target_status: TermStatus::Preferred,
+            term_case_sensitive: false,
+            show_term_form: false,
+            terminology_result: None,
             rows: BTreeMap::new(),
             requested_pages: Vec::new(),
             active_draft: None,
@@ -266,6 +289,7 @@ impl LumenCatApp {
         self.search_results.clear();
         self.is_searching = false;
         self.selection_generation += 1;
+        self.terminology_result = None;
     }
 
     fn cancel_lookups(&self) {
@@ -291,6 +315,7 @@ impl LumenCatApp {
             self.selection_generation += 1;
             self.matches.clear();
             self.qa_issues.clear();
+            self.terminology_result = None;
             let task = match nav {
                 PendingNav::Segment(id) => WorkerTask::Select(id),
                 PendingNav::Ordinal(doc, ord) => WorkerTask::AtOrdinal(doc, ord),
@@ -305,6 +330,7 @@ impl LumenCatApp {
         }
         let text = self.target_input.text.clone();
         self.confirmation_intent = None;
+        self.terminology_result = None;
         if let Some(active) = &mut self.active_draft {
             active.segment.target = text;
             if active.serial == active.saved {
@@ -476,6 +502,7 @@ impl LumenCatApp {
     pub fn request_qa(&mut self) {
         if let Some(a) = &self.active_draft {
             let task = WorkerTask::Qa(
+                a.segment.document_id,
                 a.segment.source.clone(),
                 a.segment.target.clone(),
                 a.segment.state == SegmentState::Confirmed,
@@ -781,6 +808,11 @@ impl LumenCatApp {
                         self.current_document_id = None;
                         self.progress = (0, 0);
                         self.applied_tm.clear();
+                        self.term_bases.clear();
+                        self.selected_term_base = None;
+                        self.term_source_input.set_text("");
+                        self.term_target_input.set_text("");
+                        self.term_notes_input.set_text("");
                         self.invalidate();
                         self.documents = docs;
                         self.source_lang = settings.source_lang;
@@ -805,6 +837,7 @@ impl LumenCatApp {
                                 format!("Proyecto migrado con respaldo en {}", backup.display());
                         }
                         self.refresh_memories();
+                        self.refresh_term_bases();
                     }
                     WorkerData::Settings(settings) => {
                         self.source_lang = settings.source_lang;
@@ -961,10 +994,26 @@ impl LumenCatApp {
                     WorkerData::Closed => {
                         self.opened = false;
                     }
-                    WorkerData::Qa(issues) => {
+                    WorkerData::TermBases(bases, created) => {
+                        self.selected_term_base = created
+                            .or(self.selected_term_base)
+                            .or_else(|| bases.first().map(|b| b.id));
+                        self.term_bases = bases;
+                        self.terminology_result = None;
+                        self.request_qa();
+                    }
+                    WorkerData::TermAdded(id) => {
+                        self.message = format!(
+                            "Concepto {id} guardado; no se modificó ni confirmó ningún segmento"
+                        );
+                        self.terminology_result = None;
+                        self.request_qa();
+                    }
+                    WorkerData::Qa(issues, terms) => {
                         if matches!(pending, PendingOp::Qa(g, s) if g == self.selection_generation && self.active_draft.as_ref().is_some_and(|a| a.serial == s))
                         {
                             self.qa_issues = issues;
+                            self.terminology_result = terms;
                         }
                     }
                 }
@@ -1010,7 +1059,31 @@ impl Render for LumenCatApp {
                 let source_language = this.source_language_input.focus_handle.is_focused(window);
                 let target_language = this.target_language_input.focus_handle.is_focused(window);
                 let memory_name = this.memory_name_input.focus_handle.is_focused(window);
-                if memory_name {
+                let term_base_name = this.term_base_name_input.focus_handle.is_focused(window);
+                let term_source = this.term_source_input.focus_handle.is_focused(window);
+                let term_target = this.term_target_input.focus_handle.is_focused(window);
+                let term_notes = this.term_notes_input.focus_handle.is_focused(window);
+                if term_base_name {
+                    if ks.key == "enter" {
+                        this.create_term_base();
+                    } else {
+                        this.term_base_name_input.handle_key(event, cx);
+                    }
+                } else if term_source || term_target || term_notes {
+                    if ks.key == "enter" {
+                        if term_source {
+                            this.term_target_input.focus_handle.focus(window);
+                        } else {
+                            this.add_term_concept();
+                        }
+                    } else if term_source {
+                        this.term_source_input.handle_key(event, cx);
+                    } else if term_target {
+                        this.term_target_input.handle_key(event, cx);
+                    } else {
+                        this.term_notes_input.handle_key(event, cx);
+                    }
+                } else if memory_name {
                     if ks.key == "enter" {
                         this.create_project_memory();
                     } else {
@@ -2330,6 +2403,7 @@ impl LumenCatApp {
 
         let entity_tm_tab = entity.clone();
         let entity_qa_tab = entity.clone();
+        let entity_term_tab = entity.clone();
 
         div()
             .w(px(310.))
@@ -2378,7 +2452,7 @@ impl LumenCatApp {
                                     this.active_tab = RightTab::TranslationMemory;
                                 });
                             })
-                            .child(format!("TM MATCHES ({})", matches.len())),
+                            .child(format!("TM ({})", matches.len())),
                     )
                     .child(
                         div()
@@ -2419,7 +2493,17 @@ impl LumenCatApp {
                                     this.active_tab = RightTab::QualityAssurance;
                                 });
                             })
-                            .child(format!("QA ALERTS ({})", qa_issues.len())),
+                            .child(format!("QA ({})", qa_issues.len())),
+                    )
+                    .child(
+                        div().flex_1().h_full().flex().items_center().justify_center()
+                            .cursor_pointer().text_xs().font_weight(FontWeight::BOLD)
+                            .text_color(if active_tab == RightTab::Terminology { Theme::sky() } else { Theme::text_muted() })
+                            .border_b_2().border_color(if active_tab == RightTab::Terminology { Theme::sky() } else { rgba(0x00000000) })
+                            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                entity_term_tab.update(cx, |this, cx| { this.active_tab = RightTab::Terminology; cx.notify(); });
+                            })
+                            .child("Términos"),
                     ),
             )
             .child(
@@ -2491,6 +2575,8 @@ impl LumenCatApp {
                                 })
                                 .collect()
                         }
+                    } else if active_tab == RightTab::Terminology {
+                        vec![self.render_terminology(entity.clone()).into_any_element()]
                     } else {
                         if qa_issues.is_empty() {
                             vec![

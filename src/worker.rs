@@ -26,6 +26,10 @@ pub enum Task {
     CreateMemory(String, String, String),
     SelectWriteMemory(Option<i64>),
     ConfigureMemory(i64, bool, bool),
+    TermBases,
+    CreateTermBase(String),
+    SetTermBaseEnabled(i64, bool),
+    AddTermConcept(NewTermConcept, Cancellation),
     Undo,
     Redo,
     Matches(String, String, String, Cancellation),
@@ -34,7 +38,7 @@ pub enum Task {
     ExportTm(PathBuf, Cancellation),
     Export(i64, PathBuf, Cancellation),
     Close,
-    Qa(String, String, bool),
+    Qa(i64, String, String, bool),
     Progress(i64),
     ReplaceTargets(i64, String, String),
     RecoverText(PathBuf, String, Cancellation),
@@ -48,11 +52,13 @@ pub enum Data {
     Saved(Segment),
     Confirmed(ConfirmationResult),
     Memories(Vec<MemoryCollection>, Option<i64>),
+    TermBases(Vec<TermBase>, Option<i64>),
+    TermAdded(i64),
     History(Option<Segment>),
     Matches(Vec<TmMatch>),
     Done(String),
     Closed,
-    Qa(Vec<QaIssue>),
+    Qa(Vec<QaIssue>, Option<TerminologyResult>),
     Progress(i64, usize, usize),
 }
 pub struct Request {
@@ -204,6 +210,18 @@ fn run(store: &mut Option<ProjectStore>, task: Task) -> Result<Data> {
             db.configure_memory(id, writable, enabled)?;
             Ok(Data::Memories(db.memories()?, db.write_memory()?))
         }
+        Task::TermBases => Ok(Data::TermBases(db.term_bases()?, None)),
+        Task::CreateTermBase(name) => {
+            let id = db.create_term_base(&name)?;
+            Ok(Data::TermBases(db.term_bases()?, Some(id)))
+        }
+        Task::SetTermBaseEnabled(id, enabled) => {
+            db.set_term_base_enabled(id, enabled)?;
+            Ok(Data::TermBases(db.term_bases()?, None))
+        }
+        Task::AddTermConcept(concept, cancel) => {
+            Ok(Data::TermAdded(db.add_term_concept(&concept, &cancel)?))
+        }
         Task::Undo => Ok(Data::History(db.undo()?)),
         Task::Redo => Ok(Data::History(db.redo()?)),
         Task::Matches(source, sl, tl, cancel) => Ok(Data::Matches(
@@ -232,7 +250,26 @@ fn run(store: &mut Option<ProjectStore>, task: Task) -> Result<Data> {
             db.close()?;
             Ok(Data::Closed)
         }
-        Task::Qa(source, target, confirmed) => Ok(Data::Qa(qa::check(&source, &target, confirmed))),
+        Task::Qa(document, source, target, confirmed) => {
+            let mut issues = qa::check(&source, &target, confirmed);
+            let terms = match db.terminology(document, &source, &target, &Cancellation::default()) {
+                Ok(terms) => {
+                    issues.extend(terms.issues.iter().map(|i| QaIssue {
+                        code: i.code,
+                        message: i.message.clone(),
+                    }));
+                    Some(terms)
+                }
+                Err(error) => {
+                    issues.push(QaIssue {
+                        code: "term-unavailable",
+                        message: format!("Terminología no evaluada: {error}"),
+                    });
+                    None
+                }
+            };
+            Ok(Data::Qa(issues, terms))
+        }
         Task::RecoverText(path, text, cancel) => {
             cancel.check()?;
             let parent = path
@@ -258,6 +295,87 @@ fn run(store: &mut Option<ProjectStore>, task: Task) -> Result<Data> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn term_limits_keep_textual_qa_and_report_unevaluated_instead_of_clean() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let source = directory.path().join("source.txt");
+        std::fs::write(&source, "privacy notice")?;
+        let mut store = None;
+        run(
+            &mut store,
+            Task::Open(directory.path().join("project.lcat")),
+        )?;
+        let Data::Documents(documents) = run(
+            &mut store,
+            Task::Import(source, "en".into(), "es".into(), Cancellation::default()),
+        )?
+        else {
+            return Err(CatError::Invalid("sin documento".into()));
+        };
+        let Data::TermBases(_, Some(base_id)) =
+            run(&mut store, Task::CreateTermBase("Cliente".into()))?
+        else {
+            return Err(CatError::Invalid("sin base".into()));
+        };
+        run(
+            &mut store,
+            Task::AddTermConcept(
+                NewTermConcept {
+                    base_id,
+                    domain: String::new(),
+                    notes: String::new(),
+                    provenance: "Prueba".into(),
+                    expressions: vec![
+                        TermExpression {
+                            language: "en".into(),
+                            text: "privacy notice".into(),
+                            status: TermStatus::Preferred,
+                            case_sensitive: false,
+                        },
+                        TermExpression {
+                            language: "es".into(),
+                            text: "aviso de privacidad".into(),
+                            status: TermStatus::Preferred,
+                            case_sensitive: false,
+                        },
+                    ],
+                },
+                Cancellation::default(),
+            ),
+        )?;
+        let Data::Qa(issues, terms) = run(
+            &mut store,
+            Task::Qa(
+                documents[0].id,
+                "privacy notice 42. ".repeat(513),
+                "aviso de privacidad 43.".into(),
+                true,
+            ),
+        )?
+        else {
+            return Err(CatError::Invalid("sin QA".into()));
+        };
+        assert!(terms.is_none());
+        assert!(issues.iter().any(|i| i.code == "term-unavailable"));
+        assert!(issues.iter().any(|i| i.code == "numbers"));
+        let Data::Qa(issues, Some(terms)) = run(
+            &mut store,
+            Task::Qa(
+                documents[0].id,
+                "privacy notice".into(),
+                "aviso de privacidad".into(),
+                true,
+            ),
+        )?
+        else {
+            return Err(CatError::Invalid("terminología no evaluada".into()));
+        };
+        assert!(issues.is_empty());
+        assert_eq!(terms.matches.len(), 1);
+        run(&mut store, Task::Close)?;
+        Ok(())
+    }
 
     #[test]
     fn recovery_preserves_oversize_unicode_draft_and_refuses_overwrite() -> Result<()> {

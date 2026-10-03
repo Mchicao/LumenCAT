@@ -27,6 +27,14 @@ impl LumenCatApp {
             &self.target_language_input
         } else if self.memory_name_input.focus_handle.is_focused(window) {
             &self.memory_name_input
+        } else if self.term_base_name_input.focus_handle.is_focused(window) {
+            &self.term_base_name_input
+        } else if self.term_source_input.focus_handle.is_focused(window) {
+            &self.term_source_input
+        } else if self.term_target_input.focus_handle.is_focused(window) {
+            &self.term_target_input
+        } else if self.term_notes_input.focus_handle.is_focused(window) {
+            &self.term_notes_input
         } else {
             &self.target_input
         }
@@ -42,6 +50,14 @@ impl LumenCatApp {
             &mut self.target_language_input
         } else if self.memory_name_input.focus_handle.is_focused(window) {
             &mut self.memory_name_input
+        } else if self.term_base_name_input.focus_handle.is_focused(window) {
+            &mut self.term_base_name_input
+        } else if self.term_source_input.focus_handle.is_focused(window) {
+            &mut self.term_source_input
+        } else if self.term_target_input.focus_handle.is_focused(window) {
+            &mut self.term_target_input
+        } else if self.term_notes_input.focus_handle.is_focused(window) {
+            &mut self.term_notes_input
         } else {
             &mut self.target_input
         }
@@ -56,7 +72,11 @@ impl LumenCatApp {
             && !self.replacement_input.focus_handle.is_focused(window)
             && !self.source_language_input.focus_handle.is_focused(window)
             && !self.target_language_input.focus_handle.is_focused(window)
-            && !self.memory_name_input.focus_handle.is_focused(window);
+            && !self.memory_name_input.focus_handle.is_focused(window)
+            && !self.term_base_name_input.focus_handle.is_focused(window)
+            && !self.term_source_input.focus_handle.is_focused(window)
+            && !self.term_target_input.focus_handle.is_focused(window)
+            && !self.term_notes_input.focus_handle.is_focused(window);
         if target && self.active_draft.as_ref().is_none_or(|a| a.segment.locked) {
             return None;
         }

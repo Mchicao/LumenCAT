@@ -63,3 +63,11 @@ Consulta fuzzy con OR amplio omitió candidato y join elegido por SQLite hizo co
 Todos los filtros/TM/concordancia UI llevan token cooperativo y SQLite progress_handler retirado tras llamada. Dispatcher conserva token por request ID y descarta respuesta stale; un nuevo job no pierde su token por respuesta anterior. Locks no cambian estado/origen. Draft fallido se conserva y puede exportarse íntegro a TXT nuevo o descartarse explícitamente.
 
 XLIFF textual reconoce translated/final/signed-off/approved al importar, refleja confirmación humana y lock al exportar, elimina aprobación obsoleta al reemplazar traducción. No hay workflow de revisión final propio aún. Identidad de unidades única dentro de file; source y envelope originales preservados.
+
+## 012 — Terminología por conceptos, independiente de TM
+
+F03.1 introduce bases activables dentro del proyecto, conceptos con notas/dominio/procedencia y expresiones por idioma con estado preferido/permitido/prohibido y sensibilidad a mayúsculas. El schema v5 añade tres tablas sin reescribir documentos, historial ni TU; una base v4 recibe respaldo antes de migrar. Añadir un concepto es una transacción humana, no aprende TM, no edita segmentos ni confirma. La gestión inicial es GPUI; legacy comparte los avisos QA del worker.
+
+Reconocimiento por secuencias de tokens Unicode alfanuméricos y marcas combinantes, NFC auxiliar y minúsculas Unicode cuando no se distingue el caso. Se conservan texto/offsets originales. Solo DOCX interpreta `<g>/<x/>` como códigos al reconocer; TXT/XLIFF textual conserva esas cadenas como texto literal. No se promete morfología ni segmentación de lenguas sin espacios.
+
+QA exige alguna equivalencia permitida, no todas las variantes de un concepto. Si varios conceptos coinciden en el mismo rango, muestra ambigüedad y no decide qué sentido ni qué prohibición corresponde. Un límite o error deja terminología «no evaluada», conserva QA textual y no anuncia aprobación. El escaneo actual tiene techo de 10.000 expresiones por proyecto y 512 coincidencias/incidencias por consulta; requiere indexación/medición antes de ampliarlo. TSV/TBX, excepciones, edición de variantes, selección y resaltado quedan para cortes posteriores.

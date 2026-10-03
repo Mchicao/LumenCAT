@@ -5,7 +5,7 @@ use rusqlite::{
 };
 use std::path::{Path, PathBuf};
 
-pub(super) const VERSION: i64 = 4;
+pub(super) const VERSION: i64 = 5;
 pub(super) const V2: &str = "
 CREATE TABLE operations(id INTEGER PRIMARY KEY);
 INSERT INTO operations SELECT id FROM history ORDER BY id;
@@ -34,6 +34,13 @@ CREATE INDEX tm_active_length ON tm(source_lang COLLATE NOCASE,target_lang COLLA
 CREATE TABLE history_tm(history_id INTEGER NOT NULL REFERENCES history(id) ON DELETE CASCADE,tm_id INTEGER NOT NULL REFERENCES tm(id),before_active INTEGER NOT NULL,after_active INTEGER NOT NULL,PRIMARY KEY(history_id,tm_id));
 CREATE TRIGGER tm_delete AFTER DELETE ON tm BEGIN INSERT INTO tm_fts(tm_fts,rowid,source,source_lang,target_lang) VALUES('delete',old.id,old.source,old.source_lang,old.target_lang); END;
 CREATE TRIGGER tm_update AFTER UPDATE OF source,source_lang,target_lang ON tm BEGIN INSERT INTO tm_fts(tm_fts,rowid,source,source_lang,target_lang) VALUES('delete',old.id,old.source,old.source_lang,old.target_lang); INSERT INTO tm_fts(rowid,source,source_lang,target_lang) VALUES(new.id,new.source,new.source_lang,new.target_lang); END;
+";
+pub(super) const V5: &str = "
+CREATE TABLE term_bases(id INTEGER PRIMARY KEY,name TEXT NOT NULL UNIQUE,enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)));
+CREATE TABLE term_concepts(id INTEGER PRIMARY KEY,base_id INTEGER NOT NULL REFERENCES term_bases(id),domain TEXT NOT NULL,notes TEXT NOT NULL,provenance TEXT NOT NULL);
+CREATE INDEX term_concept_base ON term_concepts(base_id);
+CREATE TABLE term_expressions(id INTEGER PRIMARY KEY,concept_id INTEGER NOT NULL REFERENCES term_concepts(id),language TEXT NOT NULL COLLATE NOCASE,text TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN ('preferred','allowed','forbidden')),case_sensitive INTEGER NOT NULL CHECK(case_sensitive IN (0,1)),UNIQUE(concept_id,language,text,status,case_sensitive));
+CREATE INDEX term_expression_language ON term_expressions(language,concept_id);
 ";
 
 pub(super) fn integrity(connection: &Connection) -> Result<()> {
@@ -101,7 +108,10 @@ pub(super) fn migrate(connection: &mut Connection, path: &Path, version: i64) ->
     if version < 3 {
         tx.execute_batch(V3)?;
     }
-    tx.execute_batch(V4)?;
+    if version < 4 {
+        tx.execute_batch(V4)?;
+    }
+    tx.execute_batch(V5)?;
     tx.pragma_update(None, "user_version", VERSION)?;
     if counts != self::counts(&tx)? {
         return Err(CatError::Invalid(

@@ -36,6 +36,7 @@ La edición, persistencia y asistencia local actual funcionan offline, sin cuent
 - Autoguardado, historial y undo/redo persistidos, bloqueos y operaciones transaccionales SQLite con WAL y `synchronous=FULL`.
 - Memoria TMX textual local, coincidencias y concordancia; aplicación humana explícita de sugerencias y avisos QA.
 - Idiomas de importación configurables y persistidos; conflicto lingüístico XLIFF rechazado. Colecciones TM internas, selección de escritura y aprendizaje de texto plano al confirmar, con suspensión al corregir y undo/redo de sus efectos. Ver [memorias](guides/MEMORIAS.md).
+- Terminología local: bases activables, conceptos con expresiones por idioma y estados preferido/permitido/prohibido. GPUI permite añadir un par manualmente; reconocimiento y QA consultan las bases compatibles. El núcleo conserva variantes, notas, dominio y procedencia. Ver [alcance y límites](guides/TERMINOLOGIA.md).
 - Importación y exportación TXT UTF-8, XLIFF 1.2 textual y un subconjunto conservador de DOCX. Word admite párrafos, celdas y tablas simples; los runs deben compartir formato inline. La exportación preserva las otras partes del paquete.
 
 ### Límites actuales

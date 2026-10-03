@@ -11,21 +11,24 @@ Actualización del mismo día: implementación autorizada por entregas, con publ
 | F00.1/F00.2 | PASS del núcleo: backup SQLite cancelable sin sobrescritura, recuperación a copia nueva, migración v1→v2 con respaldo e historial agrupado durable. `cargo test --locked --tests`: 33 pruebas; `cargo fmt --check` y Clippy all-targets sin errores. UI de respaldo/recuperación pendiente. |
 | F01.1 | PASS del núcleo: idiomas persistidos y validación de conflicto XLIFF; controles GPUI y legacy integrados. `cargo test --locked --tests`: 35 pruebas. Ventana GPUI aislada inspeccionada; recorrido interactivo pendiente porque el transporte de teclado background rechazó `Zed::Window` y no se autorizó tomar el foco. |
 | F02.1/F02.2 | PASS del núcleo: colecciones, lectura/escritura, selección/desactivación de aprendizaje y confirmación transaccional; correcciones suspenden contribuciones y undo/redo restaura actividad. Esquema v4 con backup desde v1/v2/v3. 41 pruebas, Clippy all-targets y build debug de ambas interfaces. Integración GPUI/legacy hecha; interacción física pendiente. Prioridades, penalizaciones, códigos aprendidos y procedencias agregadas pendientes. |
+| F03.1 | PASS del corte: bases activables, conceptos multilingües con variantes/estados/notas/dominio/procedencia, reconocimiento por palabras, offsets originales, QA de ausencia/prohibición y ambigüedad conservadora. Esquema v5 con respaldo desde v1–v4. 47 pruebas, Clippy y builds debug. GPUI background comprobó creación, entrada manual, reconocimiento, QA y desactivación; persistencia y comparación contra respaldo acreditan que los segmentos no cambiaron. TSV/TBX, edición avanzada, excepciones y resaltado pendientes. Ver [terminología](../guides/TERMINOLOGIA.md). |
 | F04 (validación DOCX) | Primer corte: confirmación y exportación reutilizan la validación de códigos/estructura de destino. No acredita todavía IR general de códigos ni remapeo TM. |
 | F17.1 | PASS del corte: lista nativa `UniformList`, páginas diferidas por viewport con overscan y caché de hasta 1.024 filas. 42 pruebas, formato, Clippy y builds debug. Proyecto sintético de 100.000 segmentos abierto; selección, búsqueda del último, retorno al grid, edición, autoguardado y confirmación por botón comprobados en GPUI background; lectura SQLite posterior confirma durabilidad. Ver [evidencia y límites](GRID_VIRTUALIZADO.md). |
-| F03, resto de F04, F05–F16 y resto de F17 | Pendientes. F18 sigue siendo una decisión de producto opcional, no una dependencia del núcleo local. |
+| Resto de F03/F04, F05–F16 y resto de F17 | Pendientes. F18 sigue siendo una decisión de producto opcional, no una dependencia del núcleo local. |
 
 La rama de trabajo aislada parte de `68cd8e8`; no incorpora los cambios locales previos de GPUI/lockfile/documentación del checkout principal. Los respaldos y migraciones se prueban únicamente sobre proyectos temporales. Ver [recuperación de proyectos](../guides/RECUPERACION.md).
 
 ## Conclusión
 
-LumenCAT cubre el núcleo inicial: editor bilingüe, confirmación y bloqueos, guardado e historial, TMX con coincidencias exactas/fuzzy y concordancia, QA textual y exportación TXT/XLIFF/DOCX. Las brechas principales son memoria que aprende al confirmar, terminología, cobertura documental, segmentación lingüística, reutilización por lotes y entrega/revisión para agencias. La asistencia LLM tampoco está implementada y Trados ya ofrece integración de IA: por sí sola no constituiría una diferenciación.
+LumenCAT cubre el núcleo inicial: editor bilingüe, confirmación y bloqueos, guardado e historial, TMX con coincidencias exactas/fuzzy y concordancia, QA textual y exportación TXT/XLIFF/DOCX. Las primeras entregas añaden aprendizaje TM textual y terminología local; todavía quedan alcance avanzado de esos recursos, cobertura documental, segmentación lingüística, reutilización por lotes y entrega/revisión para agencias. La asistencia LLM tampoco está implementada y Trados ya ofrece integración de IA: por sí sola no constituiría una diferenciación.
 
 La web oficial ya anuncia Studio 2026 Release; algunos resultados indexados todavía describen 2024. Para capacidades consolidadas se usan también manuales, SDK y formación oficial de versiones anteriores, identificando su alcance. No se certifica la matriz comercial completa de 2026.
 
 ## Matriz de brechas
 
 «Ausente» significa que no se encontró un flujo implementado en los módulos, almacenamiento y UI examinados. «Parcial» significa que existe una base, pero no equivalencia funcional. Los números de línea corresponden al árbol examinado y pueden desplazarse.
+
+La matriz conserva el diagnóstico del árbol inicial `68cd8e8`; el registro de avances anterior describe los cortes implementados después. No interpretar una ausencia histórica como el estado del código actual.
 
 | Función documentada de Trados | Estado de LumenCAT y evidencia local | Impacto práctico |
 |---|---|---|

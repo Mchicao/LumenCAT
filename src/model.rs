@@ -204,6 +204,94 @@ pub struct MemoryCollection {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TermStatus {
+    Preferred,
+    Allowed,
+    Forbidden,
+}
+
+impl TermStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Preferred => "preferred",
+            Self::Allowed => "allowed",
+            Self::Forbidden => "forbidden",
+        }
+    }
+
+    pub fn parse(value: &str) -> Result<Self> {
+        match value {
+            "preferred" => Ok(Self::Preferred),
+            "allowed" => Ok(Self::Allowed),
+            "forbidden" => Ok(Self::Forbidden),
+            _ => Err(CatError::Invalid("Estado terminológico desconocido".into())),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct TermBase {
+    pub id: i64,
+    pub name: String,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct TermExpression {
+    pub language: String,
+    pub text: String,
+    pub status: TermStatus,
+    pub case_sensitive: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewTermConcept {
+    pub base_id: i64,
+    pub domain: String,
+    pub notes: String,
+    pub provenance: String,
+    pub expressions: Vec<TermExpression>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TermConcept {
+    pub id: i64,
+    pub base_id: i64,
+    pub base_name: String,
+    pub domain: String,
+    pub notes: String,
+    pub provenance: String,
+    pub expressions: Vec<TermExpression>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TermMatch {
+    pub concept_id: i64,
+    pub base_name: String,
+    pub source: String,
+    pub source_range: std::ops::Range<usize>,
+    pub targets: Vec<TermExpression>,
+    pub domain: String,
+    pub notes: String,
+    pub provenance: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct TermIssue {
+    pub code: &'static str,
+    pub message: String,
+    pub concept_id: i64,
+    pub source_range: std::ops::Range<usize>,
+    pub target_range: Option<std::ops::Range<usize>>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct TerminologyResult {
+    pub matches: Vec<TermMatch>,
+    pub issues: Vec<TermIssue>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LearningOutcome {
     Learned,
     Disabled,

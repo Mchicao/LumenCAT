@@ -318,6 +318,7 @@ impl CatApp {
                         self.message = "Idiomas de importación guardados".into();
                     }
                     Data::Memories(_, _) => {}
+                    Data::TermBases(_, _) | Data::TermAdded(_) => {}
                     Data::Documents(docs) => {
                         self.documents = docs;
                         self.message = "Documentos actualizados".into();
@@ -454,7 +455,7 @@ impl CatApp {
                         self.message = message;
                     }
                     Data::Closed => self.closed = true,
-                    Data::Qa(issues) => {
+                    Data::Qa(issues, _) => {
                         if matches!(pending, Pending::Qa(g,s) if g == self.selection_generation && self.active.as_ref().is_some_and(|a|a.serial==s))
                         {
                             self.qa = issues;
@@ -517,6 +518,7 @@ impl CatApp {
     fn request_qa(&mut self) {
         if let Some(a) = &self.active {
             let task = Task::Qa(
+                a.segment.document_id,
                 a.segment.source.clone(),
                 a.segment.target.clone(),
                 a.segment.state == SegmentState::Confirmed,

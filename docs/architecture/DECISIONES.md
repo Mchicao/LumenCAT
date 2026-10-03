@@ -10,6 +10,8 @@ Una conexión escritora poseída por worker; transacciones atómicas de cambio +
 
 WAL + synchronous FULL protege commits en límites del SO/dispositivo, no garantiza hardware defectuoso. Al abrir: verificar application_id/schema, adquirir exclusión de sesión, comprobar cierre limpio, quick_check/integrity según estado, SQLite recupera WAL; avisar recuperación. No borrar WAL ni intentar reparar DB corrupta en sitio. Bloquear edición si integridad falla y preservar archivos para recuperación/backup. Primera migración transaccional; futuras migraciones exigen backup SQLite coherente antes de alterar schema. Rechazar versiones futuras.
 
+Evolución F00: el esquema v2 agrupa entradas de historial por operación. Los registros v1 se migran como operaciones individuales conservando cursor y redo. Toda migración existente exige respaldo online SQLite validado, transacción, conteos e integridad/relaciones; un fallo conserva el respaldo y revierte el schema. Recuperar siempre crea una copia nueva. Reemplazar múltiples destinos se deshace como unidad; los comandos masivos revisionados tienen límite de 10 000 segmentos y rollback completo ante conflicto/cancelación.
+
 ## 003 — Documento y formatos
 
 IR: `Document { name, format, original bytes, languages, segments }`; `Segment { id estable, ordinal, source, target, state, locked, origin, revision }`. Source inmutable. Persistir skeleton original separado. Serializador adapta IR al envelope, no regenerar XML arbitrariamente. Primer corte limita XLIFF a unidades sin inline codes ni seg-source; rechazo explícito evita destrucción. TXT preserva terminadores. Parsing/serialización/importación siempre fuera UI. Operaciones largas cooperativamente cancelables y transaccionales.

@@ -12,7 +12,8 @@ Actualización del mismo día: implementación autorizada por entregas, con publ
 | F01.1 | PASS del núcleo: idiomas persistidos y validación de conflicto XLIFF; controles GPUI y legacy integrados. `cargo test --locked --tests`: 35 pruebas. Ventana GPUI aislada inspeccionada; recorrido interactivo pendiente porque el transporte de teclado background rechazó `Zed::Window` y no se autorizó tomar el foco. |
 | F02.1/F02.2 | PASS del núcleo: colecciones, lectura/escritura, selección/desactivación de aprendizaje y confirmación transaccional; correcciones suspenden contribuciones y undo/redo restaura actividad. Esquema v4 con backup desde v1/v2/v3. 41 pruebas, Clippy all-targets y build debug de ambas interfaces. Integración GPUI/legacy hecha; interacción física pendiente. Prioridades, penalizaciones, códigos aprendidos y procedencias agregadas pendientes. |
 | F04 (validación DOCX) | Primer corte: confirmación y exportación reutilizan la validación de códigos/estructura de destino. No acredita todavía IR general de códigos ni remapeo TM. |
-| F03, resto de F04 y F05–F18 | Pendientes. F18 sigue siendo una decisión de producto opcional, no una dependencia del núcleo local. |
+| F17.1 | PASS del corte: lista nativa `UniformList`, páginas diferidas por viewport con overscan y caché de hasta 1.024 filas. 42 pruebas, formato, Clippy y builds debug. Proyecto sintético de 100.000 segmentos abierto; selección, búsqueda del último, retorno al grid, edición, autoguardado y confirmación por botón comprobados en GPUI background; lectura SQLite posterior confirma durabilidad. Ver [evidencia y límites](GRID_VIRTUALIZADO.md). |
+| F03, resto de F04, F05–F16 y resto de F17 | Pendientes. F18 sigue siendo una decisión de producto opcional, no una dependencia del núcleo local. |
 
 La rama de trabajo aislada parte de `68cd8e8`; no incorpora los cambios locales previos de GPUI/lockfile/documentación del checkout principal. Los respaldos y migraciones se prueban únicamente sobre proyectos temporales. Ver [recuperación de proyectos](../guides/RECUPERACION.md).
 
@@ -57,7 +58,7 @@ No hace falta copiar toda la plataforma. Cloud, colaboración centralizada y ges
 
 - La comprobación de LumenCAT fue estática: no prueba ergonomía, rendimiento, accesibilidad ni compatibilidad universal de los formatos.
 - `docs/PRODUCT.md` conserva límites antiguos que dicen que DOCX rechaza formato mixto y dibujos. El parser actual y `docs/technical/CONTINUACION_DOCX.md` reflejan soporte de formato mixto e imágenes estáticas. Conviene reconciliarlo en una tarea aparte; no se modificó aquí.
-- GPUI solicita datos por páginas, pero construye filas para `0..count` dentro de un contenedor con scroll (`src/gpui_app/mod.rs:1593`). Esa paginación no constituye virtualización visual. No se midió su rendimiento ni se compara con Trados.
+- El árbol de referencia construía filas para `0..count` aunque solicitaba datos por páginas. F17.1 sustituye ese recorrido por virtualización nativa. La búsqueda aún reúne resultados completos y no hay métricas p50/p95 ni comparación de rendimiento con Trados.
 - Algunas páginas devolvieron protección JavaScript o 403; la lista detallada de filtros no pudo consultarse íntegra. Se usaron páginas oficiales accesibles, resultados indexados oficiales y fuentes alternativas RWS. No se dedujo una lista exhaustiva ni la disponibilidad de todos los filtros en cada edición.
 - Studio 2026 se verificó documentalmente en páginas oficiales actuales; las funciones históricas aquí citadas no se probaron en una instalación de esa versión. La edición exacta, cuota y licencia de servicios conectados requieren comprobación al comprar o integrar.
 

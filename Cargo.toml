@@ -28,6 +28,10 @@ strip = "debuginfo"
 name = "verify_docx"
 path = "scripts/utils/verify_docx.rs"
 
+[[example]]
+name = "verify_grid"
+path = "scripts/utils/verify_grid.rs"
+
 [profile.dev]
 debug = 0
 incremental = false

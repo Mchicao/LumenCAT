@@ -42,7 +42,7 @@ La edición, persistencia y asistencia local actual funcionan offline, sin cuent
 
 - Se rechazan DOCX con texto en gráficos, SmartArt, cuadros de texto e historias secundarias, así como formato mixto y otras estructuras no soportadas. No se promete compatibilidad universal Word ni paridad visual con Microsoft Word.
 - Los badges de tags del editor no amplían el soporte de códigos inline de los importadores XLIFF/TMX ni el formato mixto de Word.
-- El grid GPUI carga el documento completo y aún no está virtualizado. Rendimiento es una prioridad, sin objetivos de latencia o escala confirmados todavía.
+- El grid GPUI usa virtualización nativa y hasta 1.024 filas en caché, además del segmento activo. La búsqueda aún reúne resultados completos. Se comprobó apertura y edición del último segmento de un corpus sintético de 100.000 filas; no hay métricas p50/p95 ni escala garantizada para corpus reales. Ver [evidencia](technical/GRID_VIRTUALIZADO.md).
 - El progreso mide destinos no vacíos, no confirmación ni QA aprobada. El porcentaje TM aplicado es metadata de sesión.
 - La selección parcial por ratón y la navegación del cursor por clic siguen pendientes. Los proyectos nuevos empiezan en→es y permiten configurar otro par para próximas importaciones; esto no relabela documentos existentes.
 

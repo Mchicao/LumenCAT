@@ -123,7 +123,8 @@ pub struct LumenCatApp {
     pub replacement_input: InputModel,
     show_replace: bool,
     document_scope: bool,
-    grid_scroll: ScrollHandle,
+    grid_scroll: UniformListScrollHandle,
+    grid_anchor: usize,
     progress: (usize, usize),
     applied_tm: HashMap<i64, f64>,
     pub search_results: Vec<Segment>,
@@ -141,6 +142,22 @@ pub struct LumenCatApp {
 impl Focusable for LumenCatApp {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus_handle.clone()
+    }
+}
+
+fn trim_grid_cache(rows: &mut BTreeMap<usize, Segment>, anchor: usize) {
+    while rows.len() > 1024 {
+        let Some((&first, _)) = rows.first_key_value() else {
+            break;
+        };
+        let Some((&last, _)) = rows.last_key_value() else {
+            break;
+        };
+        if anchor.abs_diff(first) > anchor.abs_diff(last) {
+            rows.pop_first();
+        } else {
+            rows.pop_last();
+        }
     }
 }
 
@@ -177,7 +194,8 @@ impl LumenCatApp {
             replacement_input: InputModel::new("Reemplazar por...", cx),
             show_replace: false,
             document_scope: true,
-            grid_scroll: ScrollHandle::new(),
+            grid_scroll: UniformListScrollHandle::new(),
+            grid_anchor: 0,
             progress: (0, 0),
             applied_tm: HashMap::new(),
             search_results: Vec::new(),
@@ -244,6 +262,7 @@ impl LumenCatApp {
         self.generation += 1;
         self.rows.clear();
         self.requested_pages.clear();
+        self.grid_anchor = 0;
         self.search_results.clear();
         self.is_searching = false;
         self.selection_generation += 1;
@@ -816,6 +835,7 @@ impl LumenCatApp {
                             for row in rows {
                                 self.rows.insert(row.ordinal, row);
                             }
+                            trim_grid_cache(&mut self.rows, self.grid_anchor);
                         }
                     }
                     WorkerData::Selected(segment) => {
@@ -831,7 +851,8 @@ impl LumenCatApp {
                             } else {
                                 segment.ordinal
                             };
-                            self.grid_scroll.scroll_to_item(index);
+                            self.grid_scroll
+                                .scroll_to_item(index, ScrollStrategy::Center);
                             self.active_draft = Some(DraftState::new(segment));
                             self.matches.clear();
                             let (sl, tl) = self.document_languages();
@@ -846,6 +867,7 @@ impl LumenCatApp {
                         {
                             active.acknowledge(&segment, serial);
                             self.rows.insert(segment.ordinal, segment);
+                            trim_grid_cache(&mut self.rows, self.grid_anchor);
                             self.message = "All changes saved safely to SQLite disk".into();
                         }
                         self.request_qa();
@@ -863,6 +885,7 @@ impl LumenCatApp {
                         {
                             active.acknowledge(&segment, serial);
                             self.rows.insert(segment.ordinal, segment);
+                            trim_grid_cache(&mut self.rows, self.grid_anchor);
                             let intent = self.confirmation_intent.filter(|intent| {
                                 intent.serial == serial && intent.segment_id == active.segment.id
                             });
@@ -900,6 +923,8 @@ impl LumenCatApp {
                         self.invalidate();
                         if let Some(segment) = segment {
                             self.current_document_id = Some(segment.document_id);
+                            self.grid_scroll
+                                .scroll_to_item(segment.ordinal, ScrollStrategy::Center);
                             self.target_input.set_text(segment.target.clone());
                             self.active_draft = Some(DraftState::new(segment));
                             if let Some(a) = &self.active_draft {
@@ -1006,7 +1031,8 @@ impl Render for LumenCatApp {
                     this.is_searching = false;
                     this.search_results.clear();
                     if let Some(active) = &this.active_draft {
-                        this.grid_scroll.scroll_to_item(active.segment.ordinal);
+                        this.grid_scroll
+                            .scroll_to_item(active.segment.ordinal, ScrollStrategy::Center);
                     }
                     this.show_replace = false;
                     this.target_input.focus_handle.focus(window);
@@ -1606,21 +1632,6 @@ impl LumenCatApp {
             .find(|d| Some(d.id) == self.current_document_id)
             .map_or(0, |d| d.segment_count);
 
-        // Request pages for segments that are not loaded yet
-        if !is_searching && let Some(doc_id) = self.current_document_id {
-            let active_ord = self.active_draft.as_ref().map_or(0, |d| d.segment.ordinal);
-            let start_page = (active_ord / 128) * 128;
-            if !self.requested_pages.contains(&start_page)
-                && !self.rows.contains_key(&active_ord)
-                && self.send(
-                    WorkerTask::Page(doc_id, start_page, String::new()),
-                    PendingOp::Page(self.generation, start_page),
-                )
-            {
-                self.requested_pages.push(start_page);
-            }
-        }
-
         div()
             .flex_1()
             .h_full()
@@ -1704,7 +1715,10 @@ impl LumenCatApp {
                             clear.update(cx, |this, cx| {
                                 this.is_searching = false;
                                 if let Some(active) = &this.active_draft {
-                                    this.grid_scroll.scroll_to_item(active.segment.ordinal);
+                                    this.grid_scroll.scroll_to_item(
+                                        active.segment.ordinal,
+                                        ScrollStrategy::Center,
+                                    );
                                 }
                                 this.search_input.set_text("");
                                 cx.notify();
@@ -1779,201 +1793,247 @@ impl LumenCatApp {
             .child(
                 div()
                     .id("grid_rows")
-                    .track_scroll(&self.grid_scroll)
                     .flex_1()
-                    .overflow_y_scroll()
-                    .children(if count == 0 {
-                        vec![
-                            div()
-                                .p_6()
-                                .text_center()
-                                .text_xs()
-                                .text_color(Theme::text_muted())
-                                .child(if is_searching {
-                                    "No matching segments found."
-                                } else {
-                                    "No segments in this document."
-                                })
-                                .into_any_element(),
-                        ]
+                    .min_h_0()
+                    .overflow_hidden()
+                    .child(if count == 0 {
+                        div()
+                            .p_6()
+                            .text_center()
+                            .text_xs()
+                            .text_color(Theme::text_muted())
+                            .child(if is_searching {
+                                "No matching segments found."
+                            } else {
+                                "No segments in this document."
+                            })
+                            .into_any_element()
                     } else {
-                        (0..count)
-                            .map(|index| {
-                                let (seg_id, ord, state, locked, src_preview, tgt_preview) =
-                                    if is_searching {
-                                        if let Some(row) = self.search_results.get(index) {
-                                            (
-                                                row.id,
-                                                row.ordinal,
-                                                row.state,
-                                                row.locked,
-                                                row.source.clone(),
-                                                row.target.clone(),
-                                            )
-                                        } else {
-                                            (
-                                                0,
-                                                index,
-                                                SegmentState::Draft,
-                                                false,
-                                                "...".into(),
-                                                "...".into(),
-                                            )
-                                        }
-                                    } else {
-                                        if let Some(row) = self.rows.get(&index) {
-                                            (
-                                                row.id,
-                                                row.ordinal,
-                                                row.state,
-                                                row.locked,
-                                                row.source.clone(),
-                                                row.target.clone(),
-                                            )
-                                        } else {
-                                            let page = (index / 128) * 128;
-                                            if !self.requested_pages.contains(&page)
-                                                && let Some(doc_id) = self.current_document_id
-                                                && self.send(
-                                                    WorkerTask::Page(doc_id, page, String::new()),
-                                                    PendingOp::Page(self.generation, page),
-                                                )
-                                            {
-                                                self.requested_pages.push(page);
-                                            }
-                                            (
-                                                0,
-                                                index,
-                                                SegmentState::Draft,
-                                                false,
-                                                "Loading segment...".into(),
-                                                String::new(),
-                                            )
-                                        }
-                                    };
-
-                                let is_active = Some(seg_id) == active_id && seg_id != 0;
-                                let entity_click = entity.clone();
-
-                                div()
-                                    .h(px(36.))
-                                    .flex_shrink_0()
-                                    .w_full()
-                                    .px_3()
-                                    .flex()
-                                    .items_center()
-                                    .border_b_1()
-                                    .border_color(Theme::border_subtle())
-                                    .cursor_pointer()
-                                    .bg(if is_active {
-                                        Theme::bg_selected()
-                                    } else {
-                                        Theme::bg_card()
-                                    })
-                                    .hover(|s| s.bg(Theme::bg_hover()))
-                                    .on_mouse_down(MouseButton::Left, move |_event, _window, cx| {
-                                        if seg_id != 0 {
-                                            entity_click.update(cx, |this, cx| {
-                                                this.target_input.focus_handle.focus(_window);
-                                                this.select_segment(seg_id);
-                                                cx.notify();
-                                            });
+                        let generation = self.generation;
+                        uniform_list("virtual_grid_rows", count, move |range, _, cx| {
+                            if !is_searching {
+                                let request_entity = entity.clone();
+                                let request_range = range.clone();
+                                cx.defer(move |cx| {
+                                    request_entity.update(cx, |this, _| {
+                                        if this.generation == generation && !this.is_searching {
+                                            this.request_grid_pages(request_range);
                                         }
                                     })
-                                    .child(
-                                        div()
-                                            .w(px(50.))
-                                            .text_xs()
-                                            .font_weight(FontWeight::BOLD)
-                                            .text_color(if is_active {
-                                                Theme::sky()
+                                });
+                            }
+                            entity.update(cx, |this, _| {
+                                range
+                                    .map(|index| {
+                                        let (seg_id, ord, state, locked, src_preview, tgt_preview) =
+                                            if is_searching {
+                                                if let Some(row) = this.search_results.get(index) {
+                                                    (
+                                                        row.id,
+                                                        row.ordinal,
+                                                        row.state,
+                                                        row.locked,
+                                                        row.source.clone(),
+                                                        row.target.clone(),
+                                                    )
+                                                } else {
+                                                    (
+                                                        0,
+                                                        index,
+                                                        SegmentState::Draft,
+                                                        false,
+                                                        "...".into(),
+                                                        "...".into(),
+                                                    )
+                                                }
                                             } else {
-                                                Theme::text_muted()
-                                            })
-                                            .child(format!("{:>4}", ord + 1)),
-                                    )
-                                    .child(
+                                                if let Some(row) = this.rows.get(&index) {
+                                                    (
+                                                        row.id,
+                                                        row.ordinal,
+                                                        row.state,
+                                                        row.locked,
+                                                        row.source.clone(),
+                                                        row.target.clone(),
+                                                    )
+                                                } else {
+                                                    (
+                                                        0,
+                                                        index,
+                                                        SegmentState::Draft,
+                                                        false,
+                                                        "Loading segment...".into(),
+                                                        String::new(),
+                                                    )
+                                                }
+                                            };
+
+                                        let is_active = Some(seg_id) == active_id && seg_id != 0;
+                                        let entity_click = entity.clone();
+
                                         div()
-                                            .flex_1()
-                                            .min_w_0()
-                                            .text_ellipsis()
-                                            .text_xs()
-                                            .text_color(Theme::text_primary())
-                                            .overflow_hidden()
-                                            .child(if src_preview.len() > 70 {
-                                                format!(
-                                                    "{}…",
-                                                    src_preview
-                                                        .chars()
-                                                        .take(67)
-                                                        .collect::<String>()
-                                                )
-                                            } else {
-                                                src_preview
-                                            }),
-                                    )
-                                    .child(
-                                        div()
-                                            .w(px(110.))
+                                            .h(px(36.))
+                                            .flex_shrink_0()
+                                            .w_full()
+                                            .px_3()
                                             .flex()
                                             .items_center()
-                                            .gap_1()
+                                            .border_b_1()
+                                            .border_color(Theme::border_subtle())
+                                            .cursor_pointer()
+                                            .bg(if is_active {
+                                                Theme::bg_selected()
+                                            } else {
+                                                Theme::bg_card()
+                                            })
+                                            .hover(|s| s.bg(Theme::bg_hover()))
+                                            .on_mouse_down(
+                                                MouseButton::Left,
+                                                move |_event, _window, cx| {
+                                                    if seg_id != 0 {
+                                                        entity_click.update(cx, |this, cx| {
+                                                            this.target_input
+                                                                .focus_handle
+                                                                .focus(_window);
+                                                            this.select_segment(seg_id);
+                                                            cx.notify();
+                                                        });
+                                                    }
+                                                },
+                                            )
                                             .child(
                                                 div()
+                                                    .w(px(50.))
                                                     .text_xs()
-                                                    .text_color(
-                                                        if state == SegmentState::Confirmed {
-                                                            Theme::emerald()
-                                                        } else {
-                                                            Theme::amber()
-                                                        },
-                                                    )
-                                                    .child(if locked {
-                                                        "🔒"
-                                                    } else if state == SegmentState::Confirmed {
-                                                        "✓"
+                                                    .font_weight(FontWeight::BOLD)
+                                                    .text_color(if is_active {
+                                                        Theme::sky()
                                                     } else {
-                                                        "✎"
+                                                        Theme::text_muted()
+                                                    })
+                                                    .child(format!("{:>4}", ord + 1)),
+                                            )
+                                            .child(
+                                                div()
+                                                    .flex_1()
+                                                    .min_w_0()
+                                                    .text_ellipsis()
+                                                    .text_xs()
+                                                    .text_color(Theme::text_primary())
+                                                    .overflow_hidden()
+                                                    .child(if src_preview.len() > 70 {
+                                                        format!(
+                                                            "{}…",
+                                                            src_preview
+                                                                .chars()
+                                                                .take(67)
+                                                                .collect::<String>()
+                                                        )
+                                                    } else {
+                                                        src_preview
                                                     }),
                                             )
-                                            .when(self.applied_tm.contains_key(&seg_id), |d| {
-                                                d.child(format!(
-                                                    "TM {:.0}%",
-                                                    self.applied_tm[&seg_id]
-                                                ))
-                                            }),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .min_w_0()
-                                            .text_ellipsis()
-                                            .text_xs()
-                                            .text_color(if tgt_preview.is_empty() {
-                                                Theme::text_muted()
-                                            } else {
-                                                Theme::text_accent()
-                                            })
-                                            .overflow_hidden()
-                                            .child(if tgt_preview.is_empty() {
-                                                "— empty —".into()
-                                            } else if tgt_preview.len() > 70 {
-                                                format!(
-                                                    "{}…",
-                                                    tgt_preview
-                                                        .chars()
-                                                        .take(67)
-                                                        .collect::<String>()
-                                                )
-                                            } else {
-                                                tgt_preview
-                                            }),
-                                    )
-                                    .into_any_element()
+                                            .child(
+                                                div()
+                                                    .w(px(110.))
+                                                    .flex()
+                                                    .items_center()
+                                                    .gap_1()
+                                                    .child(
+                                                        div()
+                                                            .text_xs()
+                                                            .text_color(
+                                                                if state == SegmentState::Confirmed
+                                                                {
+                                                                    Theme::emerald()
+                                                                } else {
+                                                                    Theme::amber()
+                                                                },
+                                                            )
+                                                            .child(if locked {
+                                                                "🔒"
+                                                            } else if state
+                                                                == SegmentState::Confirmed
+                                                            {
+                                                                "✓"
+                                                            } else {
+                                                                "✎"
+                                                            }),
+                                                    )
+                                                    .when(
+                                                        this.applied_tm.contains_key(&seg_id),
+                                                        |d| {
+                                                            d.child(format!(
+                                                                "TM {:.0}%",
+                                                                this.applied_tm[&seg_id]
+                                                            ))
+                                                        },
+                                                    ),
+                                            )
+                                            .child(
+                                                div()
+                                                    .flex_1()
+                                                    .min_w_0()
+                                                    .text_ellipsis()
+                                                    .text_xs()
+                                                    .text_color(if tgt_preview.is_empty() {
+                                                        Theme::text_muted()
+                                                    } else {
+                                                        Theme::text_accent()
+                                                    })
+                                                    .overflow_hidden()
+                                                    .child(if tgt_preview.is_empty() {
+                                                        "— empty —".into()
+                                                    } else if tgt_preview.len() > 70 {
+                                                        format!(
+                                                            "{}…",
+                                                            tgt_preview
+                                                                .chars()
+                                                                .take(67)
+                                                                .collect::<String>()
+                                                        )
+                                                    } else {
+                                                        tgt_preview
+                                                    }),
+                                            )
+                                            .into_any_element()
+                                    })
+                                    .collect::<Vec<_>>()
                             })
-                            .collect()
+                        })
+                        .with_width_from_item(Some(self.grid_anchor))
+                        .track_scroll(self.grid_scroll.clone())
+                        .size_full()
+                        .into_any_element()
                     }),
             )
+    }
+
+    fn request_grid_pages(&mut self, range: std::ops::Range<usize>) {
+        let Some(document) = self.current_document_id else {
+            return;
+        };
+        let count = self
+            .documents
+            .iter()
+            .find(|d| d.id == document)
+            .map_or(0, |d| d.segment_count);
+        self.grid_anchor = range.start;
+        let start = range.start.saturating_sub(128) / 128 * 128;
+        let end = range.end.saturating_add(128).min(count);
+        for page in (start..end).step_by(128) {
+            let page_end = page.saturating_add(128).min(count);
+            if !self.requested_pages.contains(&page)
+                && (page..page_end).any(|index| !self.rows.contains_key(&index))
+                && self.send(
+                    WorkerTask::Page(document, page, String::new()),
+                    PendingOp::Page(self.generation, page),
+                )
+            {
+                self.requested_pages.push(page);
+            }
+        }
+        trim_grid_cache(&mut self.rows, self.grid_anchor);
     }
 
     fn render_translation_studio(&self, entity: Entity<Self>) -> impl IntoElement {
@@ -2597,5 +2657,42 @@ impl LumenCatApp {
                         .child("100% Local · SQLite ACID · No Cloud · AI Disabled"),
                 ),
             )
+    }
+}
+
+#[cfg(test)]
+mod cache_tests {
+    use super::trim_grid_cache;
+    use crate::model::{Origin, Segment, SegmentState};
+
+    fn segment(ordinal: usize) -> Segment {
+        Segment {
+            id: ordinal as i64 + 1,
+            document_id: 1,
+            ordinal,
+            external_id: ordinal.to_string(),
+            source: "café 世界".into(),
+            target: String::new(),
+            state: SegmentState::Draft,
+            locked: false,
+            origin: Origin::Imported,
+            revision: 0,
+        }
+    }
+
+    #[test]
+    fn viewport_cache_keeps_nearby_rows_and_evicts_previous_regions() {
+        let mut rows = (0..2048)
+            .map(|ordinal| (ordinal, segment(ordinal)))
+            .collect();
+        trim_grid_cache(&mut rows, 1500);
+        assert_eq!(rows.len(), 1024);
+        assert!((1200..1800).all(|ordinal| rows.contains_key(&ordinal)));
+        assert!(!rows.contains_key(&0));
+        rows.extend((99_000..100_000).map(|ordinal| (ordinal, segment(ordinal))));
+        trim_grid_cache(&mut rows, 99_500);
+        assert_eq!(rows.len(), 1024);
+        assert!(rows.contains_key(&99_500));
+        assert!(!rows.contains_key(&1500));
     }
 }

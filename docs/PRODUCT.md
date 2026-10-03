@@ -35,6 +35,7 @@ La edición, persistencia y asistencia local actual funcionan offline, sin cuent
 - Edición GPUI con fila activa, navegación y auto-scroll, tags visuales, inserción del siguiente tag, búsqueda y reemplazo por segmento o documento, estadísticas y progreso.
 - Autoguardado, historial y undo/redo persistidos, bloqueos y operaciones transaccionales SQLite con WAL y `synchronous=FULL`.
 - Memoria TMX textual local, coincidencias y concordancia; aplicación humana explícita de sugerencias y avisos QA.
+- Idiomas de importación configurables y persistidos; conflicto lingüístico XLIFF rechazado. Colecciones TM internas, selección de escritura y aprendizaje de texto plano al confirmar, con suspensión al corregir y undo/redo de sus efectos. Ver [memorias](guides/MEMORIAS.md).
 - Importación y exportación TXT UTF-8, XLIFF 1.2 textual y un subconjunto conservador de DOCX. Word admite párrafos, celdas y tablas simples; los runs deben compartir formato inline. La exportación preserva las otras partes del paquete.
 
 ### Límites actuales
@@ -43,7 +44,7 @@ La edición, persistencia y asistencia local actual funcionan offline, sin cuent
 - Los badges de tags del editor no amplían el soporte de códigos inline de los importadores XLIFF/TMX ni el formato mixto de Word.
 - El grid GPUI carga el documento completo y aún no está virtualizado. Rendimiento es una prioridad, sin objetivos de latencia o escala confirmados todavía.
 - El progreso mide destinos no vacíos, no confirmación ni QA aprobada. El porcentaje TM aplicado es metadata de sesión.
-- La selección parcial por ratón y la navegación del cursor por clic siguen pendientes. Los proyectos nuevos GPUI usan en→es; la interfaz aún no permite elegir otro par al importarlos.
+- La selección parcial por ratón y la navegación del cursor por clic siguen pendientes. Los proyectos nuevos empiezan en→es y permiten configurar otro par para próximas importaciones; esto no relabela documentos existentes.
 
 ### Próxima prioridad y decisiones abiertas
 

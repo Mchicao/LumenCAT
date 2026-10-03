@@ -3,6 +3,53 @@ use lumencat::{
     model::{Cancellation, EditCommand, Origin, SegmentState},
     storage::ProjectStore,
 };
+
+#[test]
+fn confirmation_validates_real_word_codes_without_learning_them_as_plain_tmx()
+-> Result<(), Box<dyn std::error::Error>> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("coded.docx");
+    package(
+        &path,
+        &document(
+            "<w:p><w:r><w:t>Hello </w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>world</w:t></w:r></w:p>",
+        ),
+        &[],
+    )?;
+    let cancel = Cancellation::default();
+    let imported = import_docx(&path, "en", "es", &cancel)?;
+    let mut store = ProjectStore::open(&dir.path().join("coded.lcat"))?;
+    let doc = store.import_document(&imported, &cancel)?;
+    let row = store.page(doc, 0, 1, "")?.remove(0);
+    let mut command = EditCommand {
+        segment_id: row.id,
+        expected_revision: row.revision,
+        target: "Hola mundo".into(),
+        state: SegmentState::Draft,
+        locked: false,
+        origin: Origin::Human,
+    };
+    assert!(store.confirm(&command).is_err());
+    assert_eq!(store.segment(row.id)?.target, "");
+    command.target = "Hola <g id=\"1\">mundo</g>".into();
+    let result = store.confirm(&command)?;
+    assert_eq!(
+        result.learning,
+        lumencat::model::LearningOutcome::UnsupportedCodes
+    );
+    assert_eq!(result.segment.state, SegmentState::Confirmed);
+    assert!(store.matches(&row.source, "en", "es")?.is_empty());
+    let doc = store.load_document(doc)?;
+    let output = serialize_docx(&doc, &[result.segment.target], &cancel)?;
+    let output_path = dir.path().join("translated.docx");
+    std::fs::write(&output_path, &output)?;
+    assert_eq!(
+        import_docx(&output_path, "es", "en", &cancel)?.segments[0].source,
+        "Hola <g id=\"1\">mundo</g>"
+    );
+    store.close()?;
+    Ok(())
+}
 use std::{
     io::{Cursor, Read, Write},
     path::Path,

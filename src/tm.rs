@@ -8,6 +8,19 @@ pub fn normalized(text: &str) -> String {
 }
 
 pub fn insert(connection: &Connection, unit: &TmUnit) -> Result<usize> {
+    crate::model::validate_language(&unit.source_lang)?;
+    crate::model::validate_language(&unit.target_lang)?;
+    connection.execute("INSERT OR IGNORE INTO memories(name,source_lang,target_lang) VALUES('Memoria importada',?1,?2)", params![unit.source_lang,unit.target_lang])?;
+    let memory = connection.query_row("SELECT id FROM memories WHERE name='Memoria importada' AND source_lang=?1 AND target_lang=?2", params![unit.source_lang,unit.target_lang], |row| row.get(0))?;
+    insert_in_memory(connection, unit, memory, None)
+}
+
+pub(crate) fn insert_in_memory(
+    connection: &Connection,
+    unit: &TmUnit,
+    memory: i64,
+    learned_from: Option<i64>,
+) -> Result<usize> {
     if unit.source.len() > 1_048_576
         || unit.target.len() > 1_048_576
         || unit.raw_xml.len() > 4_194_304
@@ -17,7 +30,13 @@ pub fn insert(connection: &Connection, unit: &TmUnit) -> Result<usize> {
         ));
     }
     // Un escritor; deduplicar idénticos preserva variantes con metadata diferente.
-    Ok(connection.prepare_cached("INSERT INTO tm(source,target,source_lang,target_lang,normalized,chars,raw_xml) SELECT ?1,?2,?3,?4,?5,?6,?7 WHERE NOT EXISTS(SELECT 1 FROM tm WHERE source_lang=?3 AND target_lang=?4 AND source=?1 AND target=?2 AND raw_xml=?7)")?.execute(params![unit.source,unit.target,unit.source_lang,unit.target_lang,normalized(&unit.source),unit.source.chars().count(),unit.raw_xml])?)
+    let writable: bool = connection.query_row("SELECT writable AND enabled AND source_lang=?2 AND target_lang=?3 FROM memories WHERE id=?1", params![memory,unit.source_lang,unit.target_lang], |row| row.get(0))?;
+    if !writable {
+        return Err(CatError::Invalid(
+            "Memoria de solo lectura, desactivada o con otro par de idiomas".into(),
+        ));
+    }
+    Ok(connection.prepare_cached("INSERT INTO tm(source,target,source_lang,target_lang,normalized,chars,raw_xml,memory_id,learned_segment_id) SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9 WHERE NOT EXISTS(SELECT 1 FROM tm WHERE memory_id=?8 AND learned_segment_id IS ?9 AND source=?1 AND target=?2 AND raw_xml=?7)")?.execute(params![unit.source,unit.target,unit.source_lang,unit.target_lang,normalized(&unit.source),unit.source.chars().count(),unit.raw_xml,memory,learned_from])?)
 }
 
 fn collect(
@@ -36,6 +55,9 @@ fn collect(
                 target: row.get(2)?,
                 score: 0.0,
                 exact: false,
+                memory_id: row.get(3)?,
+                memory_name: row.get(4)?,
+                learned_from: row.get(5)?,
             })
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?)
@@ -88,7 +110,7 @@ fn language_query(query: &str, sl: &str, tl: &str) -> String {
 pub fn matches(connection: &Connection, source: &str, sl: &str, tl: &str) -> Result<Vec<TmMatch>> {
     let mut results = collect(
         connection,
-        "SELECT id,source,target FROM tm WHERE source=?1 AND source_lang=?2 AND target_lang=?3 ORDER BY id DESC LIMIT 8",
+        "SELECT tm.id,tm.source,tm.target,tm.memory_id,m.name,tm.learned_segment_id FROM tm JOIN memories m ON m.id=tm.memory_id WHERE tm.source=?1 AND tm.source_lang=?2 COLLATE NOCASE AND tm.target_lang=?3 COLLATE NOCASE AND tm.active=1 AND m.enabled=1 GROUP BY tm.source,tm.target ORDER BY tm.id DESC LIMIT 8",
         source,
         sl,
         tl,
@@ -103,18 +125,18 @@ pub fn matches(connection: &Connection, source: &str, sl: &str, tl: &str) -> Res
     let norm = normalized(source);
     let mut candidates = collect(
         connection,
-        "SELECT id,source,target FROM tm WHERE normalized=?1 AND source_lang=?2 AND target_lang=?3 ORDER BY id DESC LIMIT 256",
+        "SELECT tm.id,tm.source,tm.target,tm.memory_id,m.name,tm.learned_segment_id FROM tm JOIN memories m ON m.id=tm.memory_id WHERE tm.normalized=?1 AND tm.source_lang=?2 COLLATE NOCASE AND tm.target_lang=?3 COLLATE NOCASE AND tm.active=1 AND m.enabled=1 ORDER BY tm.id DESC LIMIT 256",
         &norm,
         sl,
         tl,
     )?;
     for fts in selective_terms(connection, source)? {
-        candidates.extend(collect(connection,"SELECT tm.id,tm.source,tm.target FROM tm_fts CROSS JOIN tm ON tm.id=tm_fts.rowid WHERE tm_fts MATCH ?1 AND tm.source_lang=?2 AND tm.target_lang=?3 LIMIT 128",&language_query(&fts,sl,tl),sl,tl)?);
+        candidates.extend(collect(connection,"SELECT tm.id,tm.source,tm.target,tm.memory_id,m.name,tm.learned_segment_id FROM tm_fts CROSS JOIN tm ON tm.id=tm_fts.rowid JOIN memories m ON m.id=tm.memory_id WHERE tm_fts MATCH ?1 AND tm.source_lang=?2 COLLATE NOCASE AND tm.target_lang=?3 COLLATE NOCASE AND tm.active=1 AND m.enabled=1 LIMIT 128",&language_query(&fts,sl,tl),sl,tl)?);
     }
     // Indexed length range supplies bounded fallback for short text and CJK without word boundaries.
     let chars = source.chars().count();
     if candidates.len() < 64 {
-        let mut statement=connection.prepare("SELECT id,source,target FROM tm WHERE source_lang=?1 AND target_lang=?2 AND chars BETWEEN ?3 AND ?4 ORDER BY chars LIMIT 256")?;
+        let mut statement=connection.prepare("SELECT tm.id,tm.source,tm.target,tm.memory_id,m.name,tm.learned_segment_id FROM tm JOIN memories m ON m.id=tm.memory_id WHERE tm.source_lang=?1 COLLATE NOCASE AND tm.target_lang=?2 COLLATE NOCASE AND tm.chars BETWEEN ?3 AND ?4 AND tm.active=1 AND m.enabled=1 ORDER BY tm.chars LIMIT 256")?;
         candidates.extend(
             statement
                 .query_map(
@@ -131,6 +153,9 @@ pub fn matches(connection: &Connection, source: &str, sl: &str, tl: &str) -> Res
                             target: row.get(2)?,
                             score: 0.0,
                             exact: false,
+                            memory_id: row.get(3)?,
+                            memory_name: row.get(4)?,
+                            learned_from: row.get(5)?,
                         })
                     },
                 )?
@@ -171,7 +196,7 @@ pub fn concordance(
     }
     collect(
         connection,
-        "SELECT tm.id,tm.source,tm.target FROM tm_fts CROSS JOIN tm ON tm.id=tm_fts.rowid WHERE tm_fts MATCH ?1 AND tm.source_lang=?2 AND tm.target_lang=?3 LIMIT 100",
+        "SELECT tm.id,tm.source,tm.target,tm.memory_id,m.name,tm.learned_segment_id FROM tm_fts CROSS JOIN tm ON tm.id=tm_fts.rowid JOIN memories m ON m.id=tm.memory_id WHERE tm_fts MATCH ?1 AND tm.source_lang=?2 COLLATE NOCASE AND tm.target_lang=?3 COLLATE NOCASE AND tm.active=1 AND m.enabled=1 GROUP BY tm.source,tm.target LIMIT 100",
         &language_query(&fts, sl, tl),
         sl,
         tl,

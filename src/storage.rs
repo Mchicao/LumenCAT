@@ -99,6 +99,7 @@ impl ProjectStore {
             tx.execute_batch(SCHEMA)?;
             tx.execute_batch(migrations::V2)?;
             tx.execute_batch(migrations::V3)?;
+            tx.execute_batch(migrations::V4)?;
             tx.pragma_update(None, "application_id", APPLICATION_ID)?;
             tx.pragma_update(None, "user_version", migrations::VERSION)?;
             tx.commit()?;
@@ -175,11 +176,86 @@ impl ProjectStore {
     pub fn set_settings(&mut self, settings: &ProjectSettings) -> Result<ProjectSettings> {
         self.writable()?;
         settings.validate()?;
-        self.connection.execute(
+        let tx = self.connection.transaction()?;
+        tx.execute(
             "UPDATE settings SET source_lang=?1,target_lang=?2 WHERE id=1",
             params![settings.source_lang, settings.target_lang],
         )?;
+        tx.execute("UPDATE settings SET write_memory_id=NULL WHERE write_memory_id IN (SELECT id FROM memories WHERE source_lang<>?1 OR target_lang<>?2)", params![settings.source_lang,settings.target_lang])?;
+        tx.commit()?;
         self.settings()
+    }
+
+    pub fn memories(&self) -> Result<Vec<MemoryCollection>> {
+        Ok(self
+            .connection
+            .prepare(
+                "SELECT id,name,source_lang,target_lang,writable,enabled FROM memories ORDER BY id",
+            )?
+            .query_map([], |row| {
+                Ok(MemoryCollection {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    source_lang: row.get(2)?,
+                    target_lang: row.get(3)?,
+                    writable: row.get(4)?,
+                    enabled: row.get(5)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+    pub fn write_memory(&self) -> Result<Option<i64>> {
+        Ok(self.connection.query_row(
+            "SELECT write_memory_id FROM settings WHERE id=1",
+            [],
+            |row| row.get(0),
+        )?)
+    }
+    pub fn create_memory(&mut self, name: &str, sl: &str, tl: &str) -> Result<i64> {
+        self.writable()?;
+        ProjectSettings {
+            source_lang: sl.into(),
+            target_lang: tl.into(),
+        }
+        .validate()?;
+        if name.trim().is_empty() || name.len() > 256 {
+            return Err(CatError::Invalid(
+                "El nombre de memoria debe tener entre 1 y 256 bytes".into(),
+            ));
+        }
+        self.connection.execute(
+            "INSERT INTO memories(name,source_lang,target_lang) VALUES(?1,?2,?3)",
+            params![name.trim(), sl, tl],
+        )?;
+        Ok(self.connection.last_insert_rowid())
+    }
+    pub fn select_write_memory(&mut self, memory: Option<i64>) -> Result<()> {
+        self.writable()?;
+        if let Some(id) = memory {
+            let usable: bool = self.connection.query_row("SELECT m.writable AND m.enabled AND m.source_lang=s.source_lang AND m.target_lang=s.target_lang FROM memories m CROSS JOIN settings s WHERE m.id=?1", [id], |row| row.get(0))?;
+            if !usable {
+                return Err(CatError::Invalid(
+                    "Elige una memoria habilitada de escritura para los idiomas del proyecto"
+                        .into(),
+                ));
+            }
+        }
+        self.connection.execute(
+            "UPDATE settings SET write_memory_id=?1 WHERE id=1",
+            [memory],
+        )?;
+        Ok(())
+    }
+    pub fn configure_memory(&mut self, id: i64, writable: bool, enabled: bool) -> Result<()> {
+        self.writable()?;
+        if self.connection.execute(
+            "UPDATE memories SET writable=?1,enabled=?2 WHERE id=?3",
+            params![writable, enabled, id],
+        )? == 0
+        {
+            return Err(CatError::Invalid("Memoria inexistente".into()));
+        }
+        Ok(())
     }
     pub fn import_document(
         &mut self,
@@ -288,9 +364,58 @@ impl ProjectStore {
     pub fn edit(&mut self, command: &EditCommand) -> Result<Segment> {
         self.writable()?;
         let tx = self.connection.transaction()?;
-        let after = apply_edit(&tx, command, &mut None)?;
+        let after = apply_edit(&tx, command, &mut None, None)?;
         tx.commit()?;
         Ok(after)
+    }
+    pub fn confirm(&mut self, command: &EditCommand) -> Result<ConfirmationResult> {
+        self.writable()?;
+        if command.target.len() > 1_048_576 {
+            return Err(CatError::Invalid("Traducción demasiado grande".into()));
+        }
+        if command.target.trim().is_empty() {
+            return Err(CatError::Invalid(
+                "No se puede confirmar una traducción vacía".into(),
+            ));
+        }
+        let tx = self.connection.transaction()?;
+        let before = get_segment(&tx, command.segment_id)?;
+        if before.locked {
+            return Err(CatError::Invalid(
+                "Desbloquea el segmento antes de confirmar".into(),
+            ));
+        }
+        let (format, sl, tl): (String, String, String) = tx.query_row(
+            "SELECT format,source_lang,target_lang FROM documents WHERE id=?1",
+            [before.document_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )?;
+        let has_codes = if format == "docx" {
+            formats::docx::validate_target(&before.source, &command.target)?;
+            crate::editing::parts(&before.source)
+                .iter()
+                .any(|(_, tag)| *tag)
+        } else {
+            false
+        };
+        let memory: Option<i64> = tx.query_row("SELECT m.id FROM settings s LEFT JOIN memories m ON m.id=s.write_memory_id AND m.writable=1 AND m.enabled=1 AND m.source_lang=?1 AND m.target_lang=?2 WHERE s.id=1", params![sl,tl], |row| row.get(0))?;
+        let learning = if has_codes {
+            LearningOutcome::UnsupportedCodes
+        } else if memory.is_some() {
+            LearningOutcome::Learned
+        } else {
+            LearningOutcome::Disabled
+        };
+        let mut confirmation = command.clone();
+        confirmation.state = SegmentState::Confirmed;
+        let segment = apply_edit(
+            &tx,
+            &confirmation,
+            &mut None,
+            if has_codes { None } else { memory },
+        )?;
+        tx.commit()?;
+        Ok(ConfirmationResult { segment, learning })
     }
     pub fn edit_batch(
         &mut self,
@@ -314,7 +439,7 @@ impl ProjectStore {
                     "Segmento duplicado en la operación".into(),
                 ));
             }
-            changed.push(apply_edit(&tx, command, &mut operation)?);
+            changed.push(apply_edit(&tx, command, &mut operation, None)?);
         }
         cancel.check()?;
         tx.commit()?;
@@ -360,6 +485,7 @@ impl ProjectStore {
                         origin: Origin::Human,
                     },
                     &mut operation,
+                    None,
                 )?;
                 count += 1;
             }
@@ -395,7 +521,7 @@ impl ProjectStore {
         }
         let prefix = if redo { "after" } else { "before" };
         let sql = format!(
-            "SELECT segment_id,{prefix}_target,{prefix}_state,{prefix}_locked,{prefix}_origin FROM history WHERE operation_id=?1 ORDER BY id"
+            "SELECT segment_id,{prefix}_target,{prefix}_state,{prefix}_locked,{prefix}_origin,id FROM history WHERE operation_id=?1 ORDER BY id"
         );
         let entries = tx
             .prepare(&sql)?
@@ -406,12 +532,14 @@ impl ProjectStore {
                     r.get::<_, String>(2)?,
                     r.get::<_, bool>(3)?,
                     r.get::<_, String>(4)?,
+                    r.get::<_, i64>(5)?,
                 ))
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
         let mut segments = Vec::new();
-        for (id, target, state, locked, origin) in entries {
+        for (id, target, state, locked, origin, history_id) in entries {
             tx.execute("UPDATE segments SET target=?1,state=?2,locked=?3,origin=?4,revision=revision+1 WHERE id=?5",params![target,state,locked,origin,id])?;
+            tx.execute(&format!("UPDATE tm SET active=(SELECT {prefix}_active FROM history_tm h WHERE h.tm_id=tm.id AND h.history_id=?1) WHERE id IN (SELECT tm_id FROM history_tm WHERE history_id=?1)"), [history_id])?;
             segments.push(get_segment(&tx, id)?);
         }
         tx.execute(
@@ -500,7 +628,7 @@ impl ProjectStore {
         let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
         let mut stmt = self
             .connection
-            .prepare("SELECT source,target,source_lang,target_lang,raw_xml FROM tm ORDER BY id")?;
+            .prepare("SELECT source,target,source_lang,target_lang,raw_xml FROM tm WHERE active=1 ORDER BY id")?;
         let units = stmt.query_map([], |r| {
             Ok(TmUnit {
                 source: r.get(0)?,
@@ -620,6 +748,7 @@ fn apply_edit(
     tx: &rusqlite::Transaction<'_>,
     command: &EditCommand,
     operation: &mut Option<i64>,
+    learning_memory: Option<i64>,
 ) -> Result<Segment> {
     if command.target.len() > 1_048_576 {
         return Err(CatError::Invalid("Traducción demasiado grande".into()));
@@ -635,7 +764,39 @@ fn apply_edit(
             "Desbloquea el segmento antes de editar su texto".into(),
         ));
     }
-    if command.target == before.target
+    let active_before = active_contributions(tx, before.id)?;
+    if command.target != before.target {
+        tx.execute(
+            "UPDATE tm SET active=0 WHERE learned_segment_id=?1 AND active=1",
+            [before.id],
+        )?;
+    }
+    if let Some(memory) = learning_memory {
+        let (sl, tl): (String, String) = tx.query_row(
+            "SELECT source_lang,target_lang FROM documents WHERE id=?1",
+            [before.document_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        tm::insert_in_memory(
+            tx,
+            &TmUnit {
+                source: before.source.clone(),
+                target: command.target.clone(),
+                source_lang: sl,
+                target_lang: tl,
+                raw_xml: String::new(),
+            },
+            memory,
+            Some(before.id),
+        )?;
+        tx.execute(
+            "UPDATE tm SET active=(target=?1) WHERE memory_id=?2 AND learned_segment_id=?3",
+            params![command.target, memory, before.id],
+        )?;
+    }
+    let active_after = active_contributions(tx, before.id)?;
+    if active_before == active_after
+        && command.target == before.target
         && command.state == before.state
         && command.locked == before.locked
         && command.origin == before.origin
@@ -670,9 +831,30 @@ fn apply_edit(
             command.origin.as_str()
         ],
     )?;
+    let history_id = tx.last_insert_rowid();
+    for id in active_before.union(&active_after) {
+        let before_active = active_before.contains(id);
+        let after_active = active_after.contains(id);
+        if before_active != after_active {
+            tx.execute(
+                "INSERT INTO history_tm VALUES(?1,?2,?3,?4)",
+                params![history_id, id, before_active, after_active],
+            )?;
+        }
+    }
     tx.execute("UPDATE segments SET target=?1,state=?2,locked=?3,origin=?4,revision=revision+1 WHERE id=?5",params![command.target,command.state.as_str(),command.locked,command.origin.as_str(),before.id])?;
     let after = get_segment(tx, before.id)?;
     Ok(after)
+}
+
+fn active_contributions(
+    connection: &Connection,
+    segment: i64,
+) -> Result<std::collections::BTreeSet<i64>> {
+    Ok(connection
+        .prepare("SELECT id FROM tm WHERE learned_segment_id=?1 AND active=1 ORDER BY id")?
+        .query_map([segment], |row| row.get(0))?
+        .collect::<std::result::Result<_, _>>()?)
 }
 
 #[cfg(test)]
@@ -685,16 +867,7 @@ mod migration_tests {
         connection.pragma_update(None, "application_id", APPLICATION_ID)?;
         connection.pragma_update(None, "user_version", 1)?;
         connection.execute_batch("PRAGMA journal_mode=WAL; INSERT INTO documents VALUES(1,'viejo','txt',X'48656C6C6F',NULL,'en','es'); INSERT INTO segments VALUES(1,1,0,'0','Hello','Café 世界 🙂','draft',0,'human',2); INSERT INTO history VALUES(1,1,'','draft',0,'imported','Café 世界 🙂','draft',0,'human'); INSERT INTO history VALUES(2,1,'Café 世界 🙂','draft',0,'human','otra variante','confirmed',0,'human'); UPDATE session SET cursor=1;")?;
-        tm::insert(
-            &connection,
-            &TmUnit {
-                source: "Hello".into(),
-                target: "Importada".into(),
-                source_lang: "en".into(),
-                target_lang: "es".into(),
-                raw_xml: String::new(),
-            },
-        )?;
+        connection.execute("INSERT INTO tm(source,target,source_lang,target_lang,normalized,chars,raw_xml) VALUES('Hello','Importada','en','es','Hello',5,'')", [])?;
         Ok(connection)
     }
 
@@ -755,6 +928,38 @@ mod migration_tests {
                 .filter_map(|e| e.ok())
                 .any(|e| e.file_name().to_string_lossy().contains("backup-v1-"))
         );
+        Ok(())
+    }
+
+    #[test]
+    fn v2_and_v3_migrate_language_variants_without_losing_units() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        for version in [2, 3] {
+            let path = directory.path().join(format!("v{version}.lcat"));
+            let connection = v1(&path)?;
+            connection.execute_batch(migrations::V2)?;
+            if version == 3 {
+                connection.execute_batch(migrations::V3)?;
+            }
+            connection.pragma_update(None, "user_version", version)?;
+            connection.execute("INSERT INTO tm(source,target,source_lang,target_lang,normalized,chars,raw_xml) VALUES('Hello','Otra importada','EN','ES','Hello',5,'')", [])?;
+            let mut store = ProjectStore::open_existing(&path)?;
+            let backup = store
+                .migration_backup
+                .as_ref()
+                .ok_or_else(|| CatError::Invalid("sin respaldo".into()))?;
+            assert_eq!(
+                migrations::read_only(backup)?
+                    .pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))?,
+                version
+            );
+            assert_eq!(store.matches("Hello", "en", "es")?.len(), 2);
+            assert_eq!(store.settings()?.source_lang, "en");
+            assert_eq!(store.segment(1)?.target, "Café 世界 🙂");
+            store.redo()?;
+            assert_eq!(store.segment(1)?.target, "otra variante");
+            store.close()?;
+        }
         Ok(())
     }
 }

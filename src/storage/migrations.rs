@@ -5,7 +5,7 @@ use rusqlite::{
 };
 use std::path::{Path, PathBuf};
 
-pub(super) const VERSION: i64 = 3;
+pub(super) const VERSION: i64 = 4;
 pub(super) const V2: &str = "
 CREATE TABLE operations(id INTEGER PRIMARY KEY);
 INSERT INTO operations SELECT id FROM history ORDER BY id;
@@ -16,6 +16,24 @@ CREATE INDEX history_operation ON history(operation_id,id);
 pub(super) const V3: &str = "
 CREATE TABLE settings(id INTEGER PRIMARY KEY CHECK(id=1),source_lang TEXT NOT NULL,target_lang TEXT NOT NULL);
 INSERT INTO settings SELECT 1,coalesce((SELECT source_lang FROM documents ORDER BY id LIMIT 1),'en'),coalesce((SELECT target_lang FROM documents ORDER BY id LIMIT 1),'es');
+";
+pub(super) const V4: &str = "
+CREATE TABLE memories(id INTEGER PRIMARY KEY,name TEXT NOT NULL,source_lang TEXT NOT NULL COLLATE NOCASE,target_lang TEXT NOT NULL COLLATE NOCASE,writable INTEGER NOT NULL DEFAULT 1,enabled INTEGER NOT NULL DEFAULT 1,UNIQUE(name,source_lang,target_lang));
+INSERT INTO memories(name,source_lang,target_lang) SELECT 'Memoria importada',source_lang,target_lang FROM tm GROUP BY source_lang COLLATE NOCASE,target_lang COLLATE NOCASE;
+ALTER TABLE tm ADD COLUMN memory_id INTEGER REFERENCES memories(id);
+ALTER TABLE tm ADD COLUMN learned_segment_id INTEGER REFERENCES segments(id);
+ALTER TABLE tm ADD COLUMN active INTEGER NOT NULL DEFAULT 1;
+UPDATE tm SET memory_id=(SELECT id FROM memories WHERE memories.source_lang=tm.source_lang AND memories.target_lang=tm.target_lang AND name='Memoria importada');
+INSERT INTO memories(name,source_lang,target_lang) SELECT 'Memoria del proyecto',source_lang,target_lang FROM settings;
+ALTER TABLE settings ADD COLUMN write_memory_id INTEGER REFERENCES memories(id);
+UPDATE settings SET write_memory_id=(SELECT id FROM memories WHERE name='Memoria del proyecto');
+CREATE INDEX tm_contribution ON tm(learned_segment_id,memory_id,active);
+CREATE INDEX tm_active_exact ON tm(source_lang COLLATE NOCASE,target_lang COLLATE NOCASE,source,active);
+CREATE INDEX tm_active_normalized ON tm(source_lang COLLATE NOCASE,target_lang COLLATE NOCASE,normalized,active);
+CREATE INDEX tm_active_length ON tm(source_lang COLLATE NOCASE,target_lang COLLATE NOCASE,chars,active);
+CREATE TABLE history_tm(history_id INTEGER NOT NULL REFERENCES history(id) ON DELETE CASCADE,tm_id INTEGER NOT NULL REFERENCES tm(id),before_active INTEGER NOT NULL,after_active INTEGER NOT NULL,PRIMARY KEY(history_id,tm_id));
+CREATE TRIGGER tm_delete AFTER DELETE ON tm BEGIN INSERT INTO tm_fts(tm_fts,rowid,source,source_lang,target_lang) VALUES('delete',old.id,old.source,old.source_lang,old.target_lang); END;
+CREATE TRIGGER tm_update AFTER UPDATE OF source,source_lang,target_lang ON tm BEGIN INSERT INTO tm_fts(tm_fts,rowid,source,source_lang,target_lang) VALUES('delete',old.id,old.source,old.source_lang,old.target_lang); INSERT INTO tm_fts(rowid,source,source_lang,target_lang) VALUES(new.id,new.source,new.source_lang,new.target_lang); END;
 ";
 
 pub(super) fn integrity(connection: &Connection) -> Result<()> {
@@ -80,7 +98,10 @@ pub(super) fn migrate(connection: &mut Connection, path: &Path, version: i64) ->
     if version < 2 {
         tx.execute_batch(V2)?;
     }
-    tx.execute_batch(V3)?;
+    if version < 3 {
+        tx.execute_batch(V3)?;
+    }
+    tx.execute_batch(V4)?;
     tx.pragma_update(None, "user_version", VERSION)?;
     if counts != self::counts(&tx)? {
         return Err(CatError::Invalid(

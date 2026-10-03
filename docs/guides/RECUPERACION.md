@@ -1,6 +1,6 @@
 # Respaldo y recuperación de proyectos
 
-La versión de esquema 3 conserva documentos, memorias e historial de proyectos v1/v2 y añade idiomas predeterminados de importación. Antes de migrar un proyecto existente, LumenCAT crea un respaldo SQLite coherente junto al original, con nombre `<archivo>.backup-v<versión>-<identificador>.lcat`. Incluye los commits todavía presentes en WAL; no es una copia simple del archivo abierto.
+La versión de esquema 4 conserva documentos, memorias e historial de proyectos v1/v2/v3 y añade idiomas predeterminados, colecciones y contribuciones aprendidas en TM. Antes de migrar un proyecto existente, LumenCAT crea un respaldo SQLite coherente junto al original, con nombre `<archivo>.backup-v<versión>-<identificador>.lcat`. Incluye los commits todavía presentes en WAL; no es una copia simple del archivo abierto.
 
 ## Qué cambia
 

@@ -188,6 +188,39 @@ pub struct TmMatch {
     pub target: String,
     pub score: f64,
     pub exact: bool,
+    pub memory_id: i64,
+    pub memory_name: String,
+    pub learned_from: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct MemoryCollection {
+    pub id: i64,
+    pub name: String,
+    pub source_lang: String,
+    pub target_lang: String,
+    pub writable: bool,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LearningOutcome {
+    Learned,
+    Disabled,
+    UnsupportedCodes,
+}
+
+#[derive(Debug, Clone)]
+pub struct ConfirmationResult {
+    pub segment: Segment,
+    pub learning: LearningOutcome,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ConfirmationIntent {
+    pub segment_id: i64,
+    pub serial: u64,
+    pub advance: bool,
 }
 #[derive(Debug, Clone)]
 pub struct QaIssue {

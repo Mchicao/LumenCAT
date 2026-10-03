@@ -21,6 +21,11 @@ pub enum Task {
     Select(i64),
     AtOrdinal(i64, usize),
     Edit(EditCommand),
+    Confirm(EditCommand),
+    MemoryResources,
+    CreateMemory(String, String, String),
+    SelectWriteMemory(Option<i64>),
+    ConfigureMemory(i64, bool, bool),
     Undo,
     Redo,
     Matches(String, String, String, Cancellation),
@@ -41,6 +46,8 @@ pub enum Data {
     Page(Vec<Segment>),
     Selected(Segment),
     Saved(Segment),
+    Confirmed(ConfirmationResult),
+    Memories(Vec<MemoryCollection>, Option<i64>),
     History(Option<Segment>),
     Matches(Vec<TmMatch>),
     Done(String),
@@ -183,6 +190,20 @@ fn run(store: &mut Option<ProjectStore>, task: Task) -> Result<Data> {
             .map(Data::Selected)
             .ok_or_else(|| CatError::Invalid("No existe ese segmento".into())),
         Task::Edit(command) => Ok(Data::Saved(db.edit(&command)?)),
+        Task::Confirm(command) => Ok(Data::Confirmed(db.confirm(&command)?)),
+        Task::MemoryResources => Ok(Data::Memories(db.memories()?, db.write_memory()?)),
+        Task::CreateMemory(name, sl, tl) => {
+            db.create_memory(&name, &sl, &tl)?;
+            Ok(Data::Memories(db.memories()?, db.write_memory()?))
+        }
+        Task::SelectWriteMemory(memory) => {
+            db.select_write_memory(memory)?;
+            Ok(Data::Memories(db.memories()?, db.write_memory()?))
+        }
+        Task::ConfigureMemory(id, writable, enabled) => {
+            db.configure_memory(id, writable, enabled)?;
+            Ok(Data::Memories(db.memories()?, db.write_memory()?))
+        }
         Task::Undo => Ok(Data::History(db.undo()?)),
         Task::Redo => Ok(Data::History(db.redo()?)),
         Task::Matches(source, sl, tl, cancel) => Ok(Data::Matches(

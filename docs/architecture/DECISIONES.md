@@ -6,7 +6,7 @@ Un paquete Rust, biblioteca + binario egui/eframe. Módulos `model`, `storage`, 
 
 ## 002 — Durabilidad y comandos
 
-Una conexión escritora poseída por worker; transacciones atómicas de cambio + historial persistente. Debounce objetivo 150–250 ms con máximo de espera aun bajo escritura continua. UI distingue pendiente/en cola/durable/error; una respuesta commit es la única confirmación de guardado. Deshacer/rehacer usa el mismo camino y persiste texto/estado/origen. Confirmar es humano y no escribe TM automáticamente. Documento original y path registrados; exportes nuevos nunca reemplazan original ni destino existente.
+Una conexión escritora poseída por worker; transacciones atómicas de cambio + historial persistente. Debounce objetivo 150–250 ms con máximo de espera aun bajo escritura continua. UI distingue pendiente/en cola/durable/error; una respuesta commit es la única confirmación de guardado. Deshacer/rehacer usa el mismo camino y persiste texto/estado/origen. Confirmar es humano y aprende texto plano en una memoria de escritura elegida y compatible; guardar un borrador no aprende. Confirmación, historial y actividad TM se guardan en la misma transacción. Documento original y path registrados; exportes nuevos nunca reemplazan original ni destino existente.
 
 WAL + synchronous FULL protege commits en límites del SO/dispositivo, no garantiza hardware defectuoso. Al abrir: verificar application_id/schema, adquirir exclusión de sesión, comprobar cierre limpio, quick_check/integrity según estado, SQLite recupera WAL; avisar recuperación. No borrar WAL ni intentar reparar DB corrupta en sitio. Bloquear edición si integridad falla y preservar archivos para recuperación/backup. Primera migración transaccional; futuras migraciones exigen backup SQLite coherente antes de alterar schema. Rechazar versiones futuras.
 
@@ -18,7 +18,7 @@ IR: `Document { name, format, original bytes, languages, segments }`; `Segment {
 
 ## 004 — Memorias grandes
 
-Tablas TU + idioma + metadata/TU original, índices exactos; FTS5 para candidatos y concordancia. Normalización auxiliar NFC, nunca cambiar raw. Exacto exige raw+idiomas; fuzzy scoring Unicode de máximo 256 candidatos y límite de longitud para no bloquear worker con inputs hostiles. No mantener TM en UI. M1 una colección; múltiples memorias/prioridad/read-write/penalty en M2 con schema explícito. No semántica hasta demostrar base. Las sugerencias muestran porcentaje/origen; insertar es un comando humano, no confirmar.
+Tablas TU + idioma + metadata/TU original, índices exactos; FTS5 para candidatos y concordancia. Normalización auxiliar NFC, nunca cambiar raw. Exacto exige raw+idiomas (los códigos de idioma se comparan sin distinguir mayúsculas, las variantes regionales siguen siendo distintas); fuzzy scoring Unicode de máximo 256 candidatos y límite de longitud para no bloquear worker con inputs hostiles. No mantener TM en UI. F02 introduce colecciones por par, selección de escritura, solo lectura y exclusión de búsquedas; prioridades y penalizaciones quedan pendientes. Las contribuciones aprendidas se versionan por colección+segmento; editar el destino las suspende, reconfirmar publica y undo/redo restaura actividad. FTS conserva versiones inmutables y las consultas filtran `active`. No semántica hasta demostrar base. Las sugerencias muestran porcentaje/colección/procedencia; insertar es un comando humano, no confirmar.
 
 ## 005 — Autoridad humana y privacidad
 

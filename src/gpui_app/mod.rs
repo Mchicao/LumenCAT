@@ -6,8 +6,8 @@ pub mod theme;
 
 use crate::{
     model::{
-        Cancellation, DocumentInfo, EditCommand, Origin, ProjectSettings, QaIssue, Segment,
-        SegmentState, TmMatch,
+        Cancellation, ConfirmationIntent, DocumentInfo, EditCommand, LearningOutcome,
+        MemoryCollection, Origin, ProjectSettings, QaIssue, Segment, SegmentState, TmMatch,
     },
     worker::{Data as WorkerData, Reply, Request, Task as WorkerTask},
 };
@@ -52,6 +52,9 @@ impl DraftState {
     pub fn acknowledge(&mut self, segment: &Segment, serial: u64) {
         if segment.id == self.segment.id {
             self.segment.revision = segment.revision;
+            if self.serial == serial {
+                self.segment = segment.clone();
+            }
             self.saved = serial;
             self.saving = false;
         }
@@ -66,6 +69,7 @@ enum PendingOp {
     Search(u64),
     Select(u64),
     Save(u64),
+    Confirm(u64),
     Matches(u64),
     History,
     Close,
@@ -94,6 +98,9 @@ pub struct LumenCatApp {
     pub target_lang: String,
     pub source_language_input: InputModel,
     pub target_language_input: InputModel,
+    pub memory_name_input: InputModel,
+    pub memories: Vec<MemoryCollection>,
+    pub write_memory_id: Option<i64>,
 
     // Grid data
     pub rows: BTreeMap<usize, Segment>,
@@ -103,6 +110,7 @@ pub struct LumenCatApp {
     pub active_draft: Option<DraftState>,
     pub target_input: InputModel,
     navigate_after_save: Option<PendingNav>,
+    confirmation_intent: Option<ConfirmationIntent>,
 
     // Intelligence
     pub matches: Vec<TmMatch>,
@@ -152,11 +160,15 @@ impl LumenCatApp {
             target_lang: "es".into(),
             source_language_input: InputModel::new("Origen (fr, en...)", cx),
             target_language_input: InputModel::new("Destino (es, pt-BR...)", cx),
+            memory_name_input: InputModel::new("Nombre de memoria", cx),
+            memories: Vec::new(),
+            write_memory_id: None,
             rows: BTreeMap::new(),
             requested_pages: Vec::new(),
             active_draft: None,
             target_input: InputModel::new("Type translation here...", cx),
             navigate_after_save: None,
+            confirmation_intent: None,
             matches: Vec::new(),
             qa_issues: Vec::new(),
             active_tab: RightTab::TranslationMemory,
@@ -205,9 +217,11 @@ impl LumenCatApp {
     }
 
     pub fn is_dirty(&self) -> bool {
-        self.active_draft
-            .as_ref()
-            .is_some_and(|a| a.serial != a.saved || a.saving)
+        self.confirmation_intent.is_some()
+            || self
+                .active_draft
+                .as_ref()
+                .is_some_and(|a| a.serial != a.saved || a.saving)
     }
 
     pub fn is_busy(&self) -> bool {
@@ -271,6 +285,7 @@ impl LumenCatApp {
             return;
         }
         let text = self.target_input.text.clone();
+        self.confirmation_intent = None;
         if let Some(active) = &mut self.active_draft {
             active.segment.target = text;
             if active.serial == active.saved {
@@ -297,15 +312,24 @@ impl LumenCatApp {
         let Some(active) = &self.active_draft else {
             return;
         };
+        if self.confirmation_intent.is_some_and(|intent| {
+            intent.segment_id != active.segment.id || intent.serial != active.serial
+        }) {
+            self.confirmation_intent = None;
+        }
         if active.segment.target.len() > 1_048_576 {
             self.save_error = true;
             self.message = "Target exceeds 1 MiB limit. Content is safely kept in editor.".into();
             return;
         }
-        if active.saving || active.serial == active.saved {
+        let confirming = self.confirmation_intent.is_some_and(|intent| {
+            intent.segment_id == active.segment.id && intent.serial == active.serial
+        });
+        if active.saving || (active.serial == active.saved && !confirming) {
             return;
         }
         if !force
+            && !confirming
             && active.changed.elapsed() < Duration::from_millis(250)
             && active.first_dirty.elapsed() < Duration::from_millis(500)
         {
@@ -320,7 +344,12 @@ impl LumenCatApp {
             locked: active.segment.locked,
             origin: active.segment.origin,
         };
-        if self.send(WorkerTask::Edit(cmd), PendingOp::Save(serial))
+        let (task, pending) = if confirming {
+            (WorkerTask::Confirm(cmd), PendingOp::Confirm(serial))
+        } else {
+            (WorkerTask::Edit(cmd), PendingOp::Save(serial))
+        };
+        if self.send(task, pending)
             && let Some(active) = &mut self.active_draft
         {
             active.saving = true;
@@ -328,22 +357,31 @@ impl LumenCatApp {
     }
 
     pub fn confirm_active(&mut self) {
-        if let Some(active) = &mut self.active_draft
-            && !active.segment.locked
-        {
-            active.segment.state = SegmentState::Confirmed;
-            active.serial += 1;
-            active.changed = Instant::now();
-        }
-        self.save(true);
+        self.queue_confirmation(false);
     }
 
     pub fn confirm_and_next(&mut self) {
         if self.active_draft.as_ref().is_none_or(|a| a.segment.locked) {
             return;
         }
-        self.confirm_active();
-        self.move_segment(1);
+        self.queue_confirmation(true);
+    }
+
+    fn queue_confirmation(&mut self, advance: bool) {
+        let Some(active) = &self.active_draft else {
+            return;
+        };
+        if active.segment.locked || active.segment.target.trim().is_empty() {
+            self.message =
+                "Introduce una traducción y desbloquea el segmento antes de confirmar".into();
+            return;
+        }
+        self.confirmation_intent = Some(ConfirmationIntent {
+            segment_id: active.segment.id,
+            serial: active.serial,
+            advance,
+        });
+        self.save(true);
     }
 
     pub fn move_segment(&mut self, delta: isize) {
@@ -595,6 +633,23 @@ impl LumenCatApp {
         );
     }
 
+    fn refresh_memories(&mut self) {
+        self.send(WorkerTask::MemoryResources, PendingOp::Operation);
+    }
+    fn create_project_memory(&mut self) {
+        if self.is_dirty() || self.is_busy() {
+            return;
+        }
+        self.send(
+            WorkerTask::CreateMemory(
+                self.memory_name_input.text.clone(),
+                self.source_lang.clone(),
+                self.target_lang.clone(),
+            ),
+            PendingOp::Operation,
+        );
+    }
+
     pub fn import_tmx_dialog(&mut self) {
         if !self.opened || self.is_busy() {
             return;
@@ -667,6 +722,7 @@ impl LumenCatApp {
             Ok(WorkerData::Opened(..)
                 | WorkerData::Documents(..)
                 | WorkerData::Saved(..)
+                | WorkerData::Confirmed(..)
                 | WorkerData::History(..)
                 | WorkerData::Done(..))
         );
@@ -685,160 +741,216 @@ impl LumenCatApp {
 
         match reply.result {
             Err(error) => {
-                if matches!(pending, PendingOp::Save(_)) {
-                    self.save_error = true;
+                if matches!(pending, PendingOp::Save(_) | PendingOp::Confirm(_)) {
+                    self.save_error = !(matches!(pending, PendingOp::Confirm(_))
+                        && matches!(error, crate::model::CatError::Format(_)));
                     if let Some(a) = &mut self.active_draft {
                         a.saving = false;
                     }
+                    self.confirmation_intent = None;
                 }
                 self.message = format!("{error}. Unsaved text remains in the editor.");
             }
-            Ok(data) => match data {
-                WorkerData::Opened(recovered, docs, settings, backup) => {
-                    self.opened = true;
-                    self.save_error = false;
-                    self.active_draft = None;
-                    self.target_input.set_text("");
-                    self.current_document_id = None;
-                    self.progress = (0, 0);
-                    self.applied_tm.clear();
-                    self.invalidate();
-                    self.documents = docs;
-                    self.source_lang = settings.source_lang;
-                    self.target_lang = settings.target_lang;
-                    self.source_language_input
-                        .set_text(self.source_lang.clone());
-                    self.target_language_input
-                        .set_text(self.target_lang.clone());
-                    if let Some(first_doc) = self.documents.first().cloned() {
-                        self.current_document_id = Some(first_doc.id);
+            Ok(data) => {
+                match data {
+                    WorkerData::Opened(recovered, docs, settings, backup) => {
+                        self.opened = true;
+                        self.save_error = false;
+                        self.active_draft = None;
+                        self.confirmation_intent = None;
+                        self.target_input.set_text("");
+                        self.current_document_id = None;
+                        self.progress = (0, 0);
+                        self.applied_tm.clear();
                         self.invalidate();
-                        self.navigate_to(PendingNav::Ordinal(first_doc.id, 0));
+                        self.documents = docs;
+                        self.source_lang = settings.source_lang;
+                        self.target_lang = settings.target_lang;
+                        self.source_language_input
+                            .set_text(self.source_lang.clone());
+                        self.target_language_input
+                            .set_text(self.target_lang.clone());
+                        if let Some(first_doc) = self.documents.first().cloned() {
+                            self.current_document_id = Some(first_doc.id);
+                            self.invalidate();
+                            self.navigate_to(PendingNav::Ordinal(first_doc.id, 0));
+                        }
+                        self.message = if recovered {
+                            "Clean recovery from previous session. SQLite verified database safely."
+                        } else {
+                            "Local project opened. Changes are saved transactionally."
+                        }
+                        .into();
+                        if let Some(backup) = backup {
+                            self.message =
+                                format!("Proyecto migrado con respaldo en {}", backup.display());
+                        }
+                        self.refresh_memories();
                     }
-                    self.message = if recovered {
-                        "Clean recovery from previous session. SQLite verified database safely."
-                    } else {
-                        "Local project opened. Changes are saved transactionally."
+                    WorkerData::Settings(settings) => {
+                        self.source_lang = settings.source_lang;
+                        self.target_lang = settings.target_lang;
+                        self.source_language_input
+                            .set_text(self.source_lang.clone());
+                        self.target_language_input
+                            .set_text(self.target_lang.clone());
+                        self.message = "Idiomas guardados para próximas importaciones; los documentos existentes no cambian".into();
+                        self.refresh_memories();
                     }
-                    .into();
-                    if let Some(backup) = backup {
-                        self.message =
-                            format!("Proyecto migrado con respaldo en {}", backup.display());
+                    WorkerData::Documents(docs) => {
+                        self.documents = docs;
+                        if self.current_document_id.is_none()
+                            && let Some(first_doc) = self.documents.first().cloned()
+                        {
+                            self.current_document_id = Some(first_doc.id);
+                            self.invalidate();
+                            self.navigate_to(PendingNav::Ordinal(first_doc.id, 0));
+                        }
+                        self.message = "Documents updated successfully".into();
                     }
-                }
-                WorkerData::Settings(settings) => {
-                    self.source_lang = settings.source_lang;
-                    self.target_lang = settings.target_lang;
-                    self.source_language_input
-                        .set_text(self.source_lang.clone());
-                    self.target_language_input
-                        .set_text(self.target_lang.clone());
-                    self.message = "Idiomas guardados para próximas importaciones; los documentos existentes no cambian".into();
-                }
-                WorkerData::Documents(docs) => {
-                    self.documents = docs;
-                    if self.current_document_id.is_none()
-                        && let Some(first_doc) = self.documents.first().cloned()
-                    {
-                        self.current_document_id = Some(first_doc.id);
-                        self.invalidate();
-                        self.navigate_to(PendingNav::Ordinal(first_doc.id, 0));
-                    }
-                    self.message = "Documents updated successfully".into();
-                }
-                WorkerData::Page(rows) => {
-                    if matches!(pending, PendingOp::Search(g) if g == self.generation) {
-                        self.message = format!("{} segmentos encontrados", rows.len());
-                        self.search_results = rows;
-                    } else if matches!(pending, PendingOp::Page(g, _) if g == self.generation) {
-                        for row in rows {
-                            self.rows.insert(row.ordinal, row);
+                    WorkerData::Page(rows) => {
+                        if matches!(pending, PendingOp::Search(g) if g == self.generation) {
+                            self.message = format!("{} segmentos encontrados", rows.len());
+                            self.search_results = rows;
+                        } else if matches!(pending, PendingOp::Page(g, _) if g == self.generation) {
+                            for row in rows {
+                                self.rows.insert(row.ordinal, row);
+                            }
                         }
                     }
-                }
-                WorkerData::Selected(segment) => {
-                    if matches!(pending, PendingOp::Select(g) | PendingOp::Reload(g) if g == self.selection_generation)
-                    {
-                        let source = segment.source.clone();
-                        self.target_input.set_text(segment.target.clone());
-                        let index = if self.is_searching {
-                            self.search_results
-                                .iter()
-                                .position(|s| s.id == segment.id)
-                                .unwrap_or(0)
-                        } else {
-                            segment.ordinal
-                        };
-                        self.grid_scroll.scroll_to_item(index);
-                        self.active_draft = Some(DraftState::new(segment));
-                        self.matches.clear();
-                        let (sl, tl) = self.document_languages();
-                        self.lookup(source, sl, tl, false);
+                    WorkerData::Selected(segment) => {
+                        if matches!(pending, PendingOp::Select(g) | PendingOp::Reload(g) if g == self.selection_generation)
+                        {
+                            let source = segment.source.clone();
+                            self.target_input.set_text(segment.target.clone());
+                            let index = if self.is_searching {
+                                self.search_results
+                                    .iter()
+                                    .position(|s| s.id == segment.id)
+                                    .unwrap_or(0)
+                            } else {
+                                segment.ordinal
+                            };
+                            self.grid_scroll.scroll_to_item(index);
+                            self.active_draft = Some(DraftState::new(segment));
+                            self.matches.clear();
+                            let (sl, tl) = self.document_languages();
+                            self.lookup(source, sl, tl, false);
+                            self.request_qa();
+                        }
+                    }
+                    WorkerData::Saved(segment) => {
+                        if let (PendingOp::Save(serial), Some(active)) =
+                            (pending, &mut self.active_draft)
+                            && segment.id == active.segment.id
+                        {
+                            active.acknowledge(&segment, serial);
+                            self.rows.insert(segment.ordinal, segment);
+                            self.message = "All changes saved safely to SQLite disk".into();
+                        }
                         self.request_qa();
-                    }
-                }
-                WorkerData::Saved(segment) => {
-                    if let (PendingOp::Save(serial), Some(active)) =
-                        (pending, &mut self.active_draft)
-                        && segment.id == active.segment.id
-                    {
-                        active.acknowledge(&segment, serial);
-                        self.rows.insert(segment.ordinal, segment);
-                        self.message = "All changes saved safely to SQLite disk".into();
-                    }
-                    self.request_qa();
-                }
-                WorkerData::History(segment) => {
-                    self.invalidate();
-                    if let Some(segment) = segment {
-                        self.current_document_id = Some(segment.document_id);
-                        self.target_input.set_text(segment.target.clone());
-                        self.active_draft = Some(DraftState::new(segment));
-                        if let Some(a) = &self.active_draft {
-                            let source = a.segment.source.clone();
+                        if let Some(active) = &self.active_draft {
+                            let source = active.segment.source.clone();
                             let (sl, tl) = self.document_languages();
                             self.lookup(source, sl, tl, false);
                         }
                     }
-                    self.message = "History state restored and committed".into();
-                    self.request_qa();
-                }
-                WorkerData::Matches(matches) => {
-                    if reply.id == self.latest_matches_req
-                        && matches!(pending, PendingOp::Matches(g) if g == self.selection_generation)
-                    {
-                        self.matches = matches;
-                    }
-                }
-                WorkerData::Progress(id, total, translated) => {
-                    if Some(id) == self.current_document_id {
-                        self.progress = (total, translated);
-                    }
-                }
-                WorkerData::Done(msg) => {
-                    if matches!(pending, PendingOp::Operation) {
-                        let selected = self.active_draft.as_ref().map(|a| a.segment.id);
-                        self.invalidate();
-                        if let Some(id) = selected {
-                            self.select_segment(id);
+                    WorkerData::Confirmed(result) => {
+                        let segment = result.segment;
+                        if let (PendingOp::Confirm(serial), Some(active)) =
+                            (pending, &mut self.active_draft)
+                            && segment.id == active.segment.id
+                        {
+                            active.acknowledge(&segment, serial);
+                            self.rows.insert(segment.ordinal, segment);
+                            let intent = self.confirmation_intent.filter(|intent| {
+                                intent.serial == serial && intent.segment_id == active.segment.id
+                            });
+                            if intent.is_some() {
+                                self.confirmation_intent = None;
+                            }
+                            let advance = intent.is_some_and(|intent| intent.advance)
+                                && active.serial == serial;
+                            self.message = match result.learning {
+                            LearningOutcome::Learned => "Confirmado y aprendido en la memoria de escritura",
+                            LearningOutcome::Disabled => "Confirmado sin aprendizaje: no hay memoria de escritura compatible",
+                            LearningOutcome::UnsupportedCodes => "Confirmado; aprendizaje de códigos DOCX todavía no soportado",
+                        }.into();
+                            if advance {
+                                self.move_segment(1);
+                            }
+                        }
+                        self.request_qa();
+                        if let Some(active) = &self.active_draft {
+                            let source = active.segment.source.clone();
+                            let (sl, tl) = self.document_languages();
+                            self.lookup(source, sl, tl, false);
                         }
                     }
-                    self.message = msg;
-                }
-                WorkerData::Closed => {
-                    self.opened = false;
-                }
-                WorkerData::Qa(issues) => {
-                    if matches!(pending, PendingOp::Qa(g, s) if g == self.selection_generation && self.active_draft.as_ref().is_some_and(|a| a.serial == s))
-                    {
-                        self.qa_issues = issues;
+                    WorkerData::Memories(memories, selected) => {
+                        self.memories = memories;
+                        self.write_memory_id = selected;
+                        if let Some(active) = &self.active_draft {
+                            let source = active.segment.source.clone();
+                            let (sl, tl) = self.document_languages();
+                            self.lookup(source, sl, tl, false);
+                        }
+                    }
+                    WorkerData::History(segment) => {
+                        self.invalidate();
+                        if let Some(segment) = segment {
+                            self.current_document_id = Some(segment.document_id);
+                            self.target_input.set_text(segment.target.clone());
+                            self.active_draft = Some(DraftState::new(segment));
+                            if let Some(a) = &self.active_draft {
+                                let source = a.segment.source.clone();
+                                let (sl, tl) = self.document_languages();
+                                self.lookup(source, sl, tl, false);
+                            }
+                        }
+                        self.message = "History state restored and committed".into();
+                        self.request_qa();
+                    }
+                    WorkerData::Matches(matches) => {
+                        if reply.id == self.latest_matches_req
+                            && matches!(pending, PendingOp::Matches(g) if g == self.selection_generation)
+                        {
+                            self.matches = matches;
+                        }
+                    }
+                    WorkerData::Progress(id, total, translated) => {
+                        if Some(id) == self.current_document_id {
+                            self.progress = (total, translated);
+                        }
+                    }
+                    WorkerData::Done(msg) => {
+                        if matches!(pending, PendingOp::Operation) {
+                            let selected = self.active_draft.as_ref().map(|a| a.segment.id);
+                            self.invalidate();
+                            if let Some(id) = selected {
+                                self.select_segment(id);
+                            }
+                        }
+                        self.message = msg;
+                    }
+                    WorkerData::Closed => {
+                        self.opened = false;
+                    }
+                    WorkerData::Qa(issues) => {
+                        if matches!(pending, PendingOp::Qa(g, s) if g == self.selection_generation && self.active_draft.as_ref().is_some_and(|a| a.serial == s))
+                        {
+                            self.qa_issues = issues;
+                        }
                     }
                 }
-            },
+            }
         }
 
         if refresh_progress {
             self.refresh_progress();
+        }
+        if self.confirmation_intent.is_some() {
+            self.save(true);
         }
         self.close_when_saved();
         if !self.is_dirty()
@@ -872,7 +984,14 @@ impl Render for LumenCatApp {
                 let replacement = this.replacement_input.focus_handle.is_focused(window);
                 let source_language = this.source_language_input.focus_handle.is_focused(window);
                 let target_language = this.target_language_input.focus_handle.is_focused(window);
-                if source_language || target_language {
+                let memory_name = this.memory_name_input.focus_handle.is_focused(window);
+                if memory_name {
+                    if ks.key == "enter" {
+                        this.create_project_memory();
+                    } else {
+                        this.memory_name_input.handle_key(event, cx);
+                    }
+                } else if source_language || target_language {
                     if ks.key == "enter" {
                         this.save_project_languages();
                     } else if source_language {
@@ -1223,6 +1342,9 @@ impl LumenCatApp {
                         },
                     )),
             )
+            .when(self.show_memory_actions, |sidebar| {
+                sidebar.child(self.render_memory_resources(entity.clone()))
+            })
             .child(
                 div()
                     .px_3()
@@ -1348,6 +1470,128 @@ impl LumenCatApp {
                                     .into_any_element()
                             })
                             .collect()
+                    }),
+            )
+    }
+
+    fn render_memory_resources(&self, entity: Entity<Self>) -> impl IntoElement {
+        let ready = self.opened && !self.is_busy() && !self.is_dirty();
+        div()
+            .id("memory-resources")
+            .max_h(px(260.))
+            .overflow_y_scroll()
+            .p_3()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(div().text_sm().child("Memorias del proyecto"))
+            .child(input_field(&self.memory_name_input, entity.clone()))
+            .child(custom_button(
+                "Crear memoria",
+                ButtonVariant::Secondary,
+                ready,
+                {
+                    let entity = entity.clone();
+                    move |_, _, cx| {
+                        entity.update(cx, |this, _| this.create_project_memory());
+                    }
+                },
+            ))
+            .child(custom_button(
+                "Desactivar aprendizaje",
+                ButtonVariant::Ghost,
+                ready,
+                {
+                    let entity = entity.clone();
+                    move |_, _, cx| {
+                        entity.update(cx, |this, _| {
+                            this.send(WorkerTask::SelectWriteMemory(None), PendingOp::Operation);
+                        });
+                    }
+                },
+            ))
+            .children(
+                self.memories
+                    .iter()
+                    .filter(|m| {
+                        m.source_lang.eq_ignore_ascii_case(&self.source_lang)
+                            && m.target_lang.eq_ignore_ascii_case(&self.target_lang)
+                    })
+                    .map(|memory| {
+                        let id = memory.id;
+                        let selected = self.write_memory_id == Some(id);
+                        let writable = memory.writable;
+                        let enabled = memory.enabled;
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .py_2()
+                            .child(div().text_xs().child(memory.name.clone()))
+                            .child(custom_button(
+                                if selected {
+                                    "Memoria de escritura"
+                                } else {
+                                    "Usar para aprender"
+                                },
+                                if selected {
+                                    ButtonVariant::Primary
+                                } else {
+                                    ButtonVariant::Secondary
+                                },
+                                ready && writable && enabled,
+                                {
+                                    let entity = entity.clone();
+                                    move |_, _, cx| {
+                                        entity.update(cx, |this, _| {
+                                            this.send(
+                                                WorkerTask::SelectWriteMemory(Some(id)),
+                                                PendingOp::Operation,
+                                            );
+                                        });
+                                    }
+                                },
+                            ))
+                            .child(custom_button(
+                                if writable {
+                                    "Pasar a solo lectura"
+                                } else {
+                                    "Permitir escritura"
+                                },
+                                ButtonVariant::Ghost,
+                                ready,
+                                {
+                                    let entity = entity.clone();
+                                    move |_, _, cx| {
+                                        entity.update(cx, |this, _| {
+                                            this.send(
+                                                WorkerTask::ConfigureMemory(id, !writable, enabled),
+                                                PendingOp::Operation,
+                                            );
+                                        });
+                                    }
+                                },
+                            ))
+                            .child(custom_button(
+                                if enabled {
+                                    "Excluir de búsquedas"
+                                } else {
+                                    "Incluir en búsquedas"
+                                },
+                                ButtonVariant::Ghost,
+                                ready,
+                                {
+                                    let entity = entity.clone();
+                                    move |_, _, cx| {
+                                        entity.update(cx, |this, _| {
+                                            this.send(
+                                                WorkerTask::ConfigureMemory(id, writable, !enabled),
+                                                PendingOp::Operation,
+                                            );
+                                        });
+                                    }
+                                },
+                            ))
                     }),
             )
     }
@@ -2174,7 +2418,7 @@ impl LumenCatApp {
                                             div()
                                                 .text_xs()
                                                 .text_color(Theme::text_secondary())
-                                                .child(format!("Src: {}", tm.source)),
+                                                .child(format!("{} · {} · Src: {}", tm.memory_name, if tm.learned_from.is_some() { "Aprendida" } else { "Importada" }, tm.source)),
                                         )
                                         .child(
                                             div()

@@ -10,7 +10,9 @@ Actualización del mismo día: implementación autorizada por entregas, con publ
 |---|---|
 | F00.1/F00.2 | PASS del núcleo: backup SQLite cancelable sin sobrescritura, recuperación a copia nueva, migración v1→v2 con respaldo e historial agrupado durable. `cargo test --locked --tests`: 33 pruebas; `cargo fmt --check` y Clippy all-targets sin errores. UI de respaldo/recuperación pendiente. |
 | F01.1 | PASS del núcleo: idiomas persistidos y validación de conflicto XLIFF; controles GPUI y legacy integrados. `cargo test --locked --tests`: 35 pruebas. Ventana GPUI aislada inspeccionada; recorrido interactivo pendiente porque el transporte de teclado background rechazó `Zed::Window` y no se autorizó tomar el foco. |
-| F02–F18 | Pendientes. F18 sigue siendo una decisión de producto opcional, no una dependencia del núcleo local. |
+| F02.1/F02.2 | PASS del núcleo: colecciones, lectura/escritura, selección/desactivación de aprendizaje y confirmación transaccional; correcciones suspenden contribuciones y undo/redo restaura actividad. Esquema v4 con backup desde v1/v2/v3. 41 pruebas, Clippy all-targets y build debug de ambas interfaces. Integración GPUI/legacy hecha; interacción física pendiente. Prioridades, penalizaciones, códigos aprendidos y procedencias agregadas pendientes. |
+| F04 (validación DOCX) | Primer corte: confirmación y exportación reutilizan la validación de códigos/estructura de destino. No acredita todavía IR general de códigos ni remapeo TM. |
+| F03, resto de F04 y F05–F18 | Pendientes. F18 sigue siendo una decisión de producto opcional, no una dependencia del núcleo local. |
 
 La rama de trabajo aislada parte de `68cd8e8`; no incorpora los cambios locales previos de GPUI/lockfile/documentación del checkout principal. Los respaldos y migraciones se prueban únicamente sobre proyectos temporales. Ver [recuperación de proyectos](../guides/RECUPERACION.md).
 

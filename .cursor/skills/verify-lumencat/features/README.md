@@ -14,7 +14,7 @@ Lee [la skill](../SKILL.md), ejecuta launch/doctor y elige la receta. Este mapa 
 | Grid, virtualización, progreso | [grid](grid.md) | GPUI, corpus pequeño y 100.000 filas |
 | TXT, XLIFF 1.2, DOCX, exportación protegida | [formats](formats.md) | GPUI y artefactos exportados; Word separado |
 | TMX, exact/fuzzy, concordancia | [memories](memories.md) | GPUI, import/export y aplicación de coincidencias |
-| Terminología | [terminology](terminology.md) | NO implementada: receta-estado y contrato de PASS futuro |
+| Terminología | [terminology](terminology.md) | GPUI: bases, conceptos, reconocimiento y QA; TBX fuera del corte |
 | Cierre, interrupción, respaldo, migración | [recovery](recovery.md) | GUI donde existe; API/proceso para resto |
 | Interfaz egui mantenida | [legacy](legacy.md) | Recorrido separado de GPUI |
 

@@ -24,7 +24,7 @@ cargo build --locked --bin lumencat --bin lumencat-gpui
 git diff --check
 ```
 
-Consulta las recetas para suites concretas (`storage`, `recovery`, `formats`, `docx`, `qa`, `replacement`, `search_cancel`, `tm_retrieval`). `cargo test` no valida GPUI/egui, entrada física, Word ni Trados. Las funciones no implementadas (por ejemplo la termbase, pendiente del paquete F03 de `docs/technical/BRECHAS_TRADOS.md`) no tienen suite ni receta ejecutable: verifica solo lo que exista en la build.
+Consulta las recetas para suites concretas (`storage`, `recovery`, `formats`, `docx`, `qa`, `replacement`, `search_cancel`, `tm_retrieval`, `tm_learning`, `terminology`) y `cargo test --locked --lib migration_tests`. `cargo test` no valida GPUI/egui, entrada física, Word ni Trados. Terminología local, aprendizaje y migraciones v1–v4→v5 existen en `524046f`; no confundas guías pendientes de actualización con ausencia de producto.
 
 - `cargo run --locked --example verify_grid -- output/verification/grid-corpus-nuevo` crea 100.000 segmentos y confirma extremos vía API. Abre ese proyecto por GUI para medir la lista; prueba importación por diálogo por separado.
 - Lee `scripts/utils/verify_docx.rs`, `verify_word.ps1` y `render_pdf.ps1` antes de usarlos. COM/Word y render son verificaciones del documento; no prueban importación desde GPUI por sí solos.

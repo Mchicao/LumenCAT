@@ -1,30 +1,30 @@
-# Estado: termbase NO implementada — sin verificación GUI posible
+# Terminología local en GPUI
 
-Actualizado: 3 de octubre de 2026. La terminología de LumenCAT **no está implementada**: no existe termbase, reconocimiento de términos, panel de términos ni QA terminológico. [`docs/technical/BRECHAS_TRADOS.md`](../../../../docs/technical/BRECHAS_TRADOS.md) la registra como brecha **Ausente** (fila «Bases terminológicas») y su paquete **F03** es el plan pendiente para implementarla. El QA actual (`src/qa.rs`) solo evalúa vacío, identidad, espacios, dígitos, tokens, puntuación y confirmación del segmento activo; no evalúa vocabulario.
-
-La receta anterior de este archivo describía una pestaña **Términos**, formularios de conceptos, bases activables y avisos `term-missing`/`term-forbidden`/`term-ambiguous`/`term-unavailable` que **no existen** en el árbol: no hay `src/terminology.rs`, ningún panel en `src/gpui_app/`, ni tablas de conceptos en el esquema de `src/storage.rs`. Era una guía escrita por adelantado, no una capacidad: no la uses como base de recorridos ni la cuentes como cobertura.
+La pestaña visual **Términos** (TabItem UIA «Terminología») administra bases y conceptos del proyecto. Implementación: `src/gpui_app/terminology.rs`, `src/terminology.rs` y esquema v5 en `src/storage/migrations.rs`. No es interoperabilidad MultiTerm.
 
 ## Sub-features
-
-Ninguna verificable hoy. Cuando se implemente el paquete F03, este archivo debe definir al menos estos ID antes de ejecutar cualquier PASS:
 
 - `terminology.create-base` y `terminology.select-base`: crear y elegir la base destino en la GUI.
 - `terminology.add-concept`: formulario con expresión origen + equivalencia destino, estado y notas.
 - `terminology.recognition`: lista «Reconocidos en el origen» para el segmento activo.
 - `terminology.qa-issues`: avisos terminológicos en la pestaña QA, con negativos prohibido/ambiguo.
 - `terminology.persistence`: bases, conceptos y estado de activación sobreviven a `-Action reopen`.
+- `terminology.enable`: desactivar/activar sin borrar conceptos; una base desactivada deja de reconocer.
 
 ## How to get to it (user POV)
 
-Hoy no hay ruta de usuario: ningún panel, pestaña, menú ni comando de terminología existe en GPUI ni en legacy (`src/app.rs` recibe avisos del worker, pero no hay proveedor de términos). Cuando F03 exista, la entrada esperada es un panel de recursos con pestaña propia; la receta se reescribirá entonces con controles reales y capturas de esa build, no con este texto.
+Abre **Términos**, escribe «Nombre de base terminológica» y pulsa **Crear base**. Selecciona su botón y **Añadir concepto**. Completa «Término de origen», «Equivalencia de destino» y notas opcionales; **Destino: preferido** alterna a permitido, prohibido y preferido. **Mayúsculas: ignorar/distinguir** configura el reconocimiento. **Guardar concepto** lo persiste para el par del documento activo; **Ocultar formulario** permite ver resultados.
+
+La lista reconoce frases completas en las bases activas del par del documento. Muestra concepto, procedencia, equivalentes y estado; **Desactivar** elimina resultados sin borrar datos. QA muestra `term-missing`, `term-forbidden`, `term-ambiguous` o `term-unavailable` cuando corresponde. Los avisos no bloquean la confirmación.
 
 ## Driving it with cua-driver
 
-Nada que conducir en esta entrega: cualquier intento sería fabricación. Cuando exista, cada PASS exigirá el nivel [GUI PASS](../references/coverage.md): entrada real por teclado/ratón en la build nueva, capturas antes/después, reconocimiento visible con el segmento activo y persistencia comprobada con `-Action reopen`. Las pruebas del núcleo que acompañen a F03 (`cargo test --locked --test <suite>`) serán evidencia auxiliar, nunca GUI PASS. Los negativos mínimos a cubrir entonces: término prohibido en destino, término ambiguo, y desactivar la base vaciando la lista sin borrar datos.
+Con `source.txt` importado, abre la pestaña por `-Action click -Label Terminología -Role TabItem`. Reemplaza campos completos con `scripts/set-field.ps1` de la skill. Crea una base, añade `Privacy → privacidad`, alterna el destino hasta **prohibido** y guarda. En una fila cuyo destino contenga «privacidad», comprueba por captura reconocimiento y QA `term-forbidden`; los textos de esas tarjetas no están en el árbol UIA. Desactiva: la lista queda sin reconocidos. Cierra/reabre, comprueba el botón **Activar**, actívala y verifica que concepto e incidencia vuelven.
+
+Recorrido ejecutado en `audit-main-gpui-20261004` (`524046f`): creación, concepto prohibido, reconocimiento, QA, desactivación y persistencia/reactivación. Ambigüedad, notas, mayúsculas y equivalentes permitidos no se condujeron en esa pasada. `cargo test --locked --test terminology` acredita solo el núcleo.
 
 ## Gotchas
 
-- No resucites la receta antigua de este archivo: sus controles, coordenadas y referencias (`docs/guides/TERMINOLOGIA.md`, `tests/terminology.rs`, `src/gpui_app/terminology.rs`) no existen. Verifica el árbol antes de reactivar cualquier texto.
-- La fila de `features/README.md` que lista esta receta («Bases, conceptos, reconocimiento, estados · GPUI; variantes avanzadas solo núcleo») quedó redactada como si la función existiera; el estado real es **pendiente (F03)** y el índice debe leerse con ese matiz hasta corregirse.
-- TBX, MultiTerm, `.sdltb` y variantes multilingües avanzadas siguen fuera del producto incluso después de un primer corte F03: requieren sus propios paquetes y no se acreditan por tener una termbase local básica.
-- Si aparece una implementación parcial, verifica solo lo expuesto por la GUI de esa build y marca el resto NOT RUN; no agregues cobertura por código núcleo.
+- Con varias bases, «Activar»/«Desactivar» deja de ser único: resuelve el control desde la captura actual.
+- No hay inserción del equivalente mediante botón en el panel, flexión lingüística ni segmentación para idiomas sin espacios. Un concepto guardado no es una unidad TM.
+- TBX, MultiTerm y `.sdltb` quedan fuera del corte. Consulta [TERMINOLOGIA](../../../../docs/guides/TERMINOLOGIA.md) para los límites del modelo; no extrapoles variantes multilingües del núcleo al formulario bilingüe.

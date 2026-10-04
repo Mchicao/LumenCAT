@@ -8,19 +8,20 @@
 
 ## How to get to it (user POV)
 
-Importa un documento y selecciónalo en **Documentos**: la tabla central carga una fila por segmento con número, origen, destino y estado; el corpus de launch (`source.txt`) produce 5 filas. La fila activa se distingue porque contiene el editor de destino inline y su origen se lee «Origen del segmento activo»; la celda «Estado» de cada fila indica `confirmed|draft|locked` + `editable`, y la barra lateral colorea rojo/ámbar/verde/gris.
+Importa un documento y selecciónalo en **Documentos**: la tabla central representa sus segmentos con número, origen, destino y estado; `source.txt` produce 5 filas. La activa contiene el editor inline y «Origen del segmento activo». Estado UIA: `confirmado|borrador; editable|bloqueado`; la barra lateral colorea rojo/ámbar/verde/gris. En documentos grandes solo se exponen las filas del viewport, no todas las del corpus.
 
 Haz clic en cualquier fila: queda activa y el editor inline salta a ella. Navega con **Anterior**/**Siguiente** o Ctrl+↑/↓; el scroll del grid recorre documentos grandes con filas virtualizadas. La barra de progreso muestra destinos no vacíos (no confirmados); su botón «Ir al primer segmento pendiente» lleva al primer segmento sin destino que esté cargado en caché. En búsqueda el grid cambia a coincidencias; «Limpiar» o Esc regresa al grid del documento.
 
 ## Driving it with cua-driver
 
-Con el `RunId` del controlador: `-Action snapshot` y verifica contra el árbol UIA que el número de filas DataItem «Segmento N» coincide con el corpus, que `Origen`/`Destino`/`Estado` exponen los valores correctos y que solo la fila activa contiene las Edit `active-source`/`target-editor`. Para `grid.select` usa `-Action click -Label 'Segmento N' -Role DataItem` y confirma en el snapshot posterior que el origen activo cambió. Para `grid.progress` clic en el botón «Ir al primer segmento pendiente» con al menos un segmento confirmado delante de un pendiente y comprueba el salto. El corpus de 100.000 filas se siembra con `cargo run --locked --example verify_grid -- <directorio nuevo>` (solo seed) y se abre por GUI; recorre principio/medio/fin y comprueba que la selección no se pierda.
+Con el `RunId` del controlador, snapshot completo: para `source.txt` deben verse cinco DataItem «Segmento N» y solo un editor activo; comprueba valores de Origen/Destino/Estado. Para `grid.select` pulsa `-Label 'Segmento N' -Role DataItem` y verifica el origen activo. Para progreso, confirma una fila delante de otra sin destino y comprueba el salto por botón. El corpus grande puede prepararse con `cargo run --locked --example verify_grid -- <directorio nuevo>` (solo seed); alternativamente genera 100.000 líneas y las importa por diálogo. Comprueba total en el lateral y render/selección de principio/medio/fin, sin exigir 100.000 elementos UIA simultáneos.
 
 ## Gotchas
 
 - `-Label 'Segmento 1' -Role DataItem` es único por documento; `-Label 'Origen'` o `-Label 'Destino'` sin rol se repiten en cada fila inactiva.
 - GPUI virtualiza filas (páginas de 128, caché de 1.024); un clic de fila puede caer sobre «Loading segment...» mientras llega la página: espera y toma snapshot nuevo antes de actuar.
 - Clic en progreso busca solo entre filas cargadas actualmente; no garantiza el primer vacío de todo el documento.
-- La celda «Estado» muestra pares `estado; editable` — el lock se verifica con el prefijo, no con `editable`.
+- La celda «Estado» muestra `confirmado|borrador; editable|bloqueado`: comprueba el sufijo y el botón «Desbloquear», no un supuesto prefijo `locked`.
+- Pasada `audit-main-gpui-20261004` (`524046f`): importación GUI de 100.000 líneas y selección/render de filas 50.000/100.000 mediante búsqueda. Seleccionar un resultado vuelve al grid normal; no pulses Limpiar después. Esto no prueba rueda/scroll manual: `cua-driver scroll` background no cambió las filas visibles y quedó BLOCKED.
 - El seed `verify_grid.rs` importa a SQLite por API y confirma extremos; jamás acredita render, scroll ni importación GUI.
 - `trim_grid_cache` tiene prueba unitaria en `src/gpui_app/mod.rs`; no prueba scroll, selección ni responsive.

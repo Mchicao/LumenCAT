@@ -33,7 +33,15 @@ fn replacement_preserves_tags_locks_history_and_rolls_back_all_edits() -> Result
     assert_eq!(rows[2].target, "té té");
     assert_eq!(rows[0].state, SegmentState::Draft);
     assert_eq!(store.undo()?.map(|s| s.target), Some("café café".into()));
+    assert_eq!(
+        store.page(id, 0, 10, "")?[0].target,
+        "café <g id=\"café\">café</g>"
+    );
     assert_eq!(store.redo()?.map(|s| s.target), Some("té té".into()));
+    assert_eq!(
+        store.page(id, 0, 10, "")?[0].target,
+        "té <g id=\"café\">té</g>"
+    );
     let before = store.page(id, 0, 10, "")?;
     assert!(
         store

@@ -2,11 +2,14 @@ pub mod components;
 pub use crate::editing;
 mod input;
 pub mod runtime;
+mod terminology;
 pub mod theme;
 
 use crate::{
     model::{
-        Cancellation, DocumentInfo, EditCommand, Origin, QaIssue, Segment, SegmentState, TmMatch,
+        Cancellation, ConfirmationIntent, DocumentInfo, EditCommand, LearningOutcome,
+        MemoryCollection, Origin, ProjectSettings, QaIssue, Segment, SegmentState, TermBase,
+        TermStatus, TerminologyResult, TmMatch,
     },
     worker::{Data as WorkerData, Reply, Request, Task as WorkerTask},
 };
@@ -25,6 +28,7 @@ use theme::Theme;
 pub enum RightTab {
     TranslationMemory,
     QualityAssurance,
+    Terminology,
 }
 
 pub struct DraftState {
@@ -51,6 +55,9 @@ impl DraftState {
     pub fn acknowledge(&mut self, segment: &Segment, serial: u64) {
         if segment.id == self.segment.id {
             self.segment.revision = segment.revision;
+            if self.serial == serial {
+                self.segment = segment.clone();
+            }
             self.saved = serial;
             self.saving = false;
         }
@@ -64,6 +71,7 @@ enum PendingOp {
     Search(u64),
     Select(u64),
     Save(u64),
+    Confirm(u64),
     Matches(u64),
     History,
     Close,
@@ -89,6 +97,21 @@ pub struct LumenCatApp {
     pub current_document_id: Option<i64>,
     pub source_lang: String,
     pub target_lang: String,
+    pub source_language_input: InputModel,
+    pub target_language_input: InputModel,
+    pub memory_name_input: InputModel,
+    pub memories: Vec<MemoryCollection>,
+    pub write_memory_id: Option<i64>,
+    term_bases: Vec<TermBase>,
+    selected_term_base: Option<i64>,
+    term_base_name_input: InputModel,
+    term_source_input: InputModel,
+    term_target_input: InputModel,
+    term_notes_input: InputModel,
+    term_target_status: TermStatus,
+    term_case_sensitive: bool,
+    show_term_form: bool,
+    terminology_result: Option<TerminologyResult>,
 
     // Grid data
     pub rows: BTreeMap<usize, Segment>,
@@ -98,6 +121,7 @@ pub struct LumenCatApp {
     pub active_draft: Option<DraftState>,
     pub target_input: InputModel,
     navigate_after_save: Option<PendingNav>,
+    confirmation_intent: Option<ConfirmationIntent>,
 
     // Intelligence
     pub matches: Vec<TmMatch>,
@@ -112,6 +136,7 @@ pub struct LumenCatApp {
     document_scope: bool,
     grid_list: ListState,
     pending_reveal: Option<usize>,
+    grid_anchor: usize,
     progress: (usize, usize),
     applied_tm: HashMap<i64, f64>,
     pub search_results: Vec<Segment>,
@@ -134,6 +159,22 @@ impl Focusable for LumenCatApp {
     }
 }
 
+fn trim_grid_cache(rows: &mut BTreeMap<usize, Segment>, anchor: usize) {
+    while rows.len() > 1024 {
+        let Some((&first, _)) = rows.first_key_value() else {
+            break;
+        };
+        let Some((&last, _)) = rows.last_key_value() else {
+            break;
+        };
+        if anchor.abs_diff(first) > anchor.abs_diff(last) {
+            rows.pop_first();
+        } else {
+            rows.pop_last();
+        }
+    }
+}
+
 impl LumenCatApp {
     pub fn new(sender: SyncSender<Request>, project: Option<String>, cx: &mut App) -> Self {
         let mut app = Self {
@@ -148,11 +189,27 @@ impl LumenCatApp {
             current_document_id: None,
             source_lang: "en".into(),
             target_lang: "es".into(),
+            source_language_input: InputModel::new("Origen (fr, en...)", cx),
+            target_language_input: InputModel::new("Destino (es, pt-BR...)", cx),
+            memory_name_input: InputModel::new("Nombre de memoria", cx),
+            memories: Vec::new(),
+            write_memory_id: None,
+            term_bases: Vec::new(),
+            selected_term_base: None,
+            term_base_name_input: InputModel::new("Nombre de base terminológica", cx),
+            term_source_input: InputModel::new("Término de origen", cx),
+            term_target_input: InputModel::new("Equivalencia de destino", cx),
+            term_notes_input: InputModel::new("Notas (opcional)", cx),
+            term_target_status: TermStatus::Preferred,
+            term_case_sensitive: false,
+            show_term_form: false,
+            terminology_result: None,
             rows: BTreeMap::new(),
             requested_pages: Vec::new(),
             active_draft: None,
             target_input: InputModel::new("Type translation here...", cx),
             navigate_after_save: None,
+            confirmation_intent: None,
             matches: Vec::new(),
             qa_issues: Vec::new(),
             active_tab: RightTab::TranslationMemory,
@@ -163,6 +220,7 @@ impl LumenCatApp {
             document_scope: true,
             grid_list: ListState::new(0, ListAlignment::Top, px(600.)),
             pending_reveal: None,
+            grid_anchor: 0,
             progress: (0, 0),
             applied_tm: HashMap::new(),
             search_results: Vec::new(),
@@ -214,9 +272,11 @@ impl LumenCatApp {
     }
 
     pub fn is_dirty(&self) -> bool {
-        self.active_draft
-            .as_ref()
-            .is_some_and(|a| a.serial != a.saved || a.saving)
+        self.confirmation_intent.is_some()
+            || self
+                .active_draft
+                .as_ref()
+                .is_some_and(|a| a.serial != a.saved || a.saving)
     }
 
     pub fn is_busy(&self) -> bool {
@@ -238,9 +298,11 @@ impl LumenCatApp {
         self.generation += 1;
         self.rows.clear();
         self.requested_pages.clear();
+        self.grid_anchor = 0;
         self.search_results.clear();
         self.is_searching = false;
         self.selection_generation += 1;
+        self.terminology_result = None;
         self.grid_list.reset(0);
     }
 
@@ -294,6 +356,7 @@ impl LumenCatApp {
             self.selection_generation += 1;
             self.matches.clear();
             self.qa_issues.clear();
+            self.terminology_result = None;
             let task = match nav {
                 PendingNav::Segment(id) => WorkerTask::Select(id),
                 PendingNav::Ordinal(doc, ord) => WorkerTask::AtOrdinal(doc, ord),
@@ -307,6 +370,8 @@ impl LumenCatApp {
             return;
         }
         let text = self.target_input.text.clone();
+        self.confirmation_intent = None;
+        self.terminology_result = None;
         if let Some(active) = &mut self.active_draft {
             active.segment.target = text;
             if active.serial == active.saved {
@@ -333,15 +398,24 @@ impl LumenCatApp {
         let Some(active) = &self.active_draft else {
             return;
         };
+        if self.confirmation_intent.is_some_and(|intent| {
+            intent.segment_id != active.segment.id || intent.serial != active.serial
+        }) {
+            self.confirmation_intent = None;
+        }
         if active.segment.target.len() > 1_048_576 {
             self.save_error = true;
             self.message = "Target exceeds 1 MiB limit. Content is safely kept in editor.".into();
             return;
         }
-        if active.saving || active.serial == active.saved {
+        let confirming = self.confirmation_intent.is_some_and(|intent| {
+            intent.segment_id == active.segment.id && intent.serial == active.serial
+        });
+        if active.saving || (active.serial == active.saved && !confirming) {
             return;
         }
         if !force
+            && !confirming
             && active.changed.elapsed() < Duration::from_millis(250)
             && active.first_dirty.elapsed() < Duration::from_millis(500)
         {
@@ -356,7 +430,12 @@ impl LumenCatApp {
             locked: active.segment.locked,
             origin: active.segment.origin,
         };
-        if self.send(WorkerTask::Edit(cmd), PendingOp::Save(serial))
+        let (task, pending) = if confirming {
+            (WorkerTask::Confirm(cmd), PendingOp::Confirm(serial))
+        } else {
+            (WorkerTask::Edit(cmd), PendingOp::Save(serial))
+        };
+        if self.send(task, pending)
             && let Some(active) = &mut self.active_draft
         {
             active.saving = true;
@@ -364,22 +443,31 @@ impl LumenCatApp {
     }
 
     pub fn confirm_active(&mut self) {
-        if let Some(active) = &mut self.active_draft
-            && !active.segment.locked
-        {
-            active.segment.state = SegmentState::Confirmed;
-            active.serial += 1;
-            active.changed = Instant::now();
-        }
-        self.save(true);
+        self.queue_confirmation(false);
     }
 
     pub fn confirm_and_next(&mut self) {
         if self.active_draft.as_ref().is_none_or(|a| a.segment.locked) {
             return;
         }
-        self.confirm_active();
-        self.move_segment(1);
+        self.queue_confirmation(true);
+    }
+
+    fn queue_confirmation(&mut self, advance: bool) {
+        let Some(active) = &self.active_draft else {
+            return;
+        };
+        if active.segment.locked || active.segment.target.trim().is_empty() {
+            self.message =
+                "Introduce una traducción y desbloquea el segmento antes de confirmar".into();
+            return;
+        }
+        self.confirmation_intent = Some(ConfirmationIntent {
+            segment_id: active.segment.id,
+            serial: active.serial,
+            advance,
+        });
+        self.save(true);
     }
 
     pub fn move_segment(&mut self, delta: isize) {
@@ -455,6 +543,7 @@ impl LumenCatApp {
     pub fn request_qa(&mut self) {
         if let Some(a) = &self.active_draft {
             let task = WorkerTask::Qa(
+                a.segment.document_id,
                 a.segment.source.clone(),
                 a.segment.target.clone(),
                 a.segment.state == SegmentState::Confirmed,
@@ -611,7 +700,7 @@ impl LumenCatApp {
             .pick_file();
         self.native_dialog_open = false;
         if let Some(path) = path {
-            let (sl, tl) = self.document_languages();
+            let (sl, tl) = (self.source_lang.clone(), self.target_lang.clone());
             let cancel = Cancellation::default();
             if self.send(
                 WorkerTask::Import(path, sl, tl, cancel.clone()),
@@ -621,6 +710,36 @@ impl LumenCatApp {
                 self.message = "Importing document...".into();
             }
         }
+    }
+
+    pub fn save_project_languages(&mut self) {
+        if !self.opened || self.is_busy() || self.is_dirty() {
+            return;
+        }
+        self.send(
+            WorkerTask::SetSettings(ProjectSettings {
+                source_lang: self.source_language_input.text.clone(),
+                target_lang: self.target_language_input.text.clone(),
+            }),
+            PendingOp::Operation,
+        );
+    }
+
+    fn refresh_memories(&mut self) {
+        self.send(WorkerTask::MemoryResources, PendingOp::Operation);
+    }
+    fn create_project_memory(&mut self) {
+        if self.is_dirty() || self.is_busy() {
+            return;
+        }
+        self.send(
+            WorkerTask::CreateMemory(
+                self.memory_name_input.text.clone(),
+                self.source_lang.clone(),
+                self.target_lang.clone(),
+            ),
+            PendingOp::Operation,
+        );
     }
 
     pub fn import_tmx_dialog(&mut self) {
@@ -705,6 +824,7 @@ impl LumenCatApp {
                 | WorkerData::Documents(..)
                 | WorkerData::Saved(..)
                 | WorkerData::History(..)
+                | WorkerData::Confirmed(..)
                 | WorkerData::Done(..))
         );
 
@@ -723,26 +843,40 @@ impl LumenCatApp {
         match reply.result {
             Err(error) => {
                 self.message_error = true;
-                if matches!(pending, PendingOp::Save(_)) {
-                    self.save_error = true;
+                if matches!(pending, PendingOp::Save(_) | PendingOp::Confirm(_)) {
+                    self.save_error = !(matches!(pending, PendingOp::Confirm(_))
+                        && matches!(error, crate::model::CatError::Format(_)));
                     if let Some(a) = &mut self.active_draft {
                         a.saving = false;
                     }
+                    self.confirmation_intent = None;
                 }
                 self.message = error.to_string();
             }
             Ok(data) => match data {
-                WorkerData::Opened(recovered, docs) => {
+                WorkerData::Opened(recovered, docs, settings, backup) => {
                     self.message_error = false;
                     self.opened = true;
                     self.save_error = false;
                     self.active_draft = None;
+                    self.confirmation_intent = None;
                     self.target_input.set_text("");
                     self.current_document_id = None;
                     self.progress = (0, 0);
                     self.applied_tm.clear();
+                    self.term_bases.clear();
+                    self.selected_term_base = None;
+                    self.term_source_input.set_text("");
+                    self.term_target_input.set_text("");
+                    self.term_notes_input.set_text("");
                     self.invalidate();
                     self.documents = docs;
+                    self.source_lang = settings.source_lang;
+                    self.target_lang = settings.target_lang;
+                    self.source_language_input
+                        .set_text(self.source_lang.clone());
+                    self.target_language_input
+                        .set_text(self.target_lang.clone());
                     if let Some(first_doc) = self.documents.first().cloned() {
                         self.activate_document(first_doc.id);
                     }
@@ -752,6 +886,22 @@ impl LumenCatApp {
                         "Local project opened. Changes are saved transactionally."
                     }
                     .into();
+                    if let Some(backup) = backup {
+                        self.message =
+                            format!("Proyecto migrado con respaldo en {}", backup.display());
+                    }
+                    self.refresh_memories();
+                    self.refresh_term_bases();
+                }
+                WorkerData::Settings(settings) => {
+                    self.source_lang = settings.source_lang;
+                    self.target_lang = settings.target_lang;
+                    self.source_language_input
+                        .set_text(self.source_lang.clone());
+                    self.target_language_input
+                        .set_text(self.target_lang.clone());
+                    self.message = "Idiomas guardados para próximas importaciones; los documentos existentes no cambian".into();
+                    self.refresh_memories();
                 }
                 WorkerData::Documents(docs) => {
                     self.message_error = false;
@@ -775,6 +925,7 @@ impl LumenCatApp {
                             changed.push(row.ordinal);
                             self.rows.insert(row.ordinal, row);
                         }
+                        trim_grid_cache(&mut self.rows, self.grid_anchor);
                         self.remeasure_rows(changed);
                     }
                 }
@@ -795,6 +946,7 @@ impl LumenCatApp {
                             .as_ref()
                             .filter(|d| d.segment.document_id == segment.document_id)
                             .map(|d| d.segment.ordinal);
+                        self.grid_anchor = index;
                         self.rows.insert(segment.ordinal, segment.clone());
                         self.active_draft = Some(DraftState::new(segment));
                         let mut changed = vec![index];
@@ -817,6 +969,7 @@ impl LumenCatApp {
                     {
                         active.acknowledge(&segment, serial);
                         self.rows.insert(segment.ordinal, segment);
+                        trim_grid_cache(&mut self.rows, self.grid_anchor);
                         self.message = "All changes saved safely to SQLite disk".into();
                         Some(active.segment.ordinal)
                     } else {
@@ -827,12 +980,71 @@ impl LumenCatApp {
                     }
                     self.request_qa();
                 }
+                WorkerData::Confirmed(result) => {
+                    self.message_error = false;
+                    let segment = result.segment;
+                    let confirm_serial = match pending {
+                        PendingOp::Confirm(serial) => Some(serial),
+                        _ => None,
+                    };
+                    let active_info = self
+                        .active_draft
+                        .as_ref()
+                        .map(|a| (a.segment.id, a.serial, a.segment.ordinal));
+                    let mut confirmed_ordinal = None;
+                    if let (Some(serial), Some((id, active_serial, ordinal))) =
+                        (confirm_serial, active_info)
+                        && segment.id == id
+                    {
+                        let intent = self
+                            .confirmation_intent
+                            .take()
+                            .filter(|intent| intent.serial == serial && intent.segment_id == id);
+                        if let Some(active) = &mut self.active_draft {
+                            active.acknowledge(&segment, serial);
+                        }
+                        self.rows.insert(ordinal, segment);
+                        trim_grid_cache(&mut self.rows, self.grid_anchor);
+                        let advance =
+                            intent.is_some_and(|intent| intent.advance) && active_serial == serial;
+                        self.message = match result.learning {
+                            LearningOutcome::Learned => {
+                                "Confirmado y aprendido en la memoria de escritura"
+                            }
+                            LearningOutcome::Disabled => {
+                                "Confirmado sin aprendizaje: no hay memoria de escritura compatible"
+                            }
+                            LearningOutcome::UnsupportedCodes => {
+                                "Confirmado; aprendizaje de códigos DOCX todavía no soportado"
+                            }
+                        }
+                        .into();
+                        if advance {
+                            self.move_segment(1);
+                        }
+                        confirmed_ordinal = Some(ordinal);
+                    }
+                    if let Some(ordinal) = confirmed_ordinal {
+                        self.remeasure_rows(vec![ordinal]);
+                    }
+                    self.request_qa();
+                }
+                WorkerData::Memories(memories, selected) => {
+                    self.memories = memories;
+                    self.write_memory_id = selected;
+                    if let Some(active) = &self.active_draft {
+                        let source = active.segment.source.clone();
+                        let (sl, tl) = self.document_languages();
+                        self.lookup(source, sl, tl, false);
+                    }
+                }
                 WorkerData::History(segment) => {
                     self.message_error = false;
                     self.invalidate();
                     if let Some(segment) = segment {
                         self.current_document_id = Some(segment.document_id);
                         self.target_input.set_text(segment.target.clone());
+                        self.grid_anchor = segment.ordinal;
                         self.rows.insert(segment.ordinal, segment.clone());
                         self.active_draft = Some(DraftState::new(segment));
                         self.pending_reveal =
@@ -872,10 +1084,26 @@ impl LumenCatApp {
                 WorkerData::Closed => {
                     self.opened = false;
                 }
-                WorkerData::Qa(issues) => {
+                WorkerData::TermBases(bases, created) => {
+                    self.selected_term_base = created
+                        .or(self.selected_term_base)
+                        .or_else(|| bases.first().map(|b| b.id));
+                    self.term_bases = bases;
+                    self.terminology_result = None;
+                    self.request_qa();
+                }
+                WorkerData::TermAdded(id) => {
+                    self.message = format!(
+                        "Concepto {id} guardado; no se modificó ni confirmó ningún segmento"
+                    );
+                    self.terminology_result = None;
+                    self.request_qa();
+                }
+                WorkerData::Qa(issues, terms) => {
                     if matches!(pending, PendingOp::Qa(g, s) if g == self.selection_generation && self.active_draft.as_ref().is_some_and(|a| a.serial == s))
                     {
                         self.qa_issues = issues;
+                        self.terminology_result = terms;
                     }
                 }
             },
@@ -883,6 +1111,9 @@ impl LumenCatApp {
 
         if refresh_progress {
             self.refresh_progress();
+        }
+        if self.confirmation_intent.is_some() {
+            self.save(true);
         }
         self.close_when_saved();
         if !self.is_dirty()
@@ -918,7 +1149,48 @@ impl Render for LumenCatApp {
                 let ks = &event.keystroke;
                 let search = this.search_input.focus_handle.is_focused(window);
                 let replacement = this.replacement_input.focus_handle.is_focused(window);
-                if ks.key == "tab" {
+                let source_language = this.source_language_input.focus_handle.is_focused(window);
+                let target_language = this.target_language_input.focus_handle.is_focused(window);
+                let memory_name = this.memory_name_input.focus_handle.is_focused(window);
+                let term_base_name = this.term_base_name_input.focus_handle.is_focused(window);
+                let term_source = this.term_source_input.focus_handle.is_focused(window);
+                let term_target = this.term_target_input.focus_handle.is_focused(window);
+                let term_notes = this.term_notes_input.focus_handle.is_focused(window);
+                if term_base_name {
+                    if ks.key == "enter" {
+                        this.create_term_base();
+                    } else {
+                        this.term_base_name_input.handle_key(event, cx);
+                    }
+                } else if term_source || term_target || term_notes {
+                    if ks.key == "enter" {
+                        if term_source {
+                            this.term_target_input.focus_handle.focus(window, cx);
+                        } else {
+                            this.add_term_concept();
+                        }
+                    } else if term_source {
+                        this.term_source_input.handle_key(event, cx);
+                    } else if term_target {
+                        this.term_target_input.handle_key(event, cx);
+                    } else {
+                        this.term_notes_input.handle_key(event, cx);
+                    }
+                } else if memory_name {
+                    if ks.key == "enter" {
+                        this.create_project_memory();
+                    } else {
+                        this.memory_name_input.handle_key(event, cx);
+                    }
+                } else if source_language || target_language {
+                    if ks.key == "enter" {
+                        this.save_project_languages();
+                    } else if source_language {
+                        this.source_language_input.handle_key(event, cx);
+                    } else {
+                        this.target_language_input.handle_key(event, cx);
+                    }
+                } else if ks.key == "tab" {
                     if ks.modifiers.shift {
                         window.focus_prev(cx);
                     } else {
@@ -1274,6 +1546,50 @@ impl LumenCatApp {
             .flex_col()
             .child(
                 div()
+                    .p_3()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(div().text_sm().child("Idiomas de importación"))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(Theme::text_secondary())
+                            .child("Origen"),
+                    )
+                    .child(input_field(
+                        input::InputField::SourceLanguage,
+                        &self.source_language_input,
+                        entity.clone(),
+                    ))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(Theme::text_secondary())
+                            .child("Destino"),
+                    )
+                    .child(input_field(
+                        input::InputField::TargetLanguage,
+                        &self.target_language_input,
+                        entity.clone(),
+                    ))
+                    .child(quick_button(
+                        "Guardar idiomas",
+                        ButtonVariant::Secondary,
+                        self.opened && !is_busy && !is_dirty,
+                        {
+                            let entity = entity.clone();
+                            move |_, _, cx| {
+                                entity.update(cx, |this, _| this.save_project_languages());
+                            }
+                        },
+                    )),
+            )
+            .when(self.show_memory_actions, |sidebar| {
+                sidebar.child(self.render_memory_resources(entity.clone()))
+            })
+            .child(
+                div()
                     .px_3()
                     .py_2p5()
                     .border_b_1()
@@ -1415,6 +1731,132 @@ impl LumenCatApp {
             )
     }
 
+    fn render_memory_resources(&self, entity: Entity<Self>) -> impl IntoElement {
+        let ready = self.opened && !self.is_busy() && !self.is_dirty();
+        div()
+            .id("memory-resources")
+            .max_h(px(260.))
+            .overflow_y_scroll()
+            .p_3()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(div().text_sm().child("Memorias del proyecto"))
+            .child(input_field(
+                input::InputField::MemoryName,
+                &self.memory_name_input,
+                entity.clone(),
+            ))
+            .child(quick_button(
+                "Crear memoria",
+                ButtonVariant::Secondary,
+                ready,
+                {
+                    let entity = entity.clone();
+                    move |_, _, cx| {
+                        entity.update(cx, |this, _| this.create_project_memory());
+                    }
+                },
+            ))
+            .child(quick_button(
+                "Desactivar aprendizaje",
+                ButtonVariant::Ghost,
+                ready,
+                {
+                    let entity = entity.clone();
+                    move |_, _, cx| {
+                        entity.update(cx, |this, _| {
+                            this.send(WorkerTask::SelectWriteMemory(None), PendingOp::Operation);
+                        });
+                    }
+                },
+            ))
+            .children(
+                self.memories
+                    .iter()
+                    .filter(|m| {
+                        m.source_lang.eq_ignore_ascii_case(&self.source_lang)
+                            && m.target_lang.eq_ignore_ascii_case(&self.target_lang)
+                    })
+                    .map(|memory| {
+                        let id = memory.id;
+                        let selected = self.write_memory_id == Some(id);
+                        let writable = memory.writable;
+                        let enabled = memory.enabled;
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .py_2()
+                            .child(div().text_xs().child(memory.name.clone()))
+                            .child(quick_button(
+                                if selected {
+                                    "Memoria de escritura"
+                                } else {
+                                    "Usar para aprender"
+                                },
+                                if selected {
+                                    ButtonVariant::Primary
+                                } else {
+                                    ButtonVariant::Secondary
+                                },
+                                ready && writable && enabled,
+                                {
+                                    let entity = entity.clone();
+                                    move |_, _, cx| {
+                                        entity.update(cx, |this, _| {
+                                            this.send(
+                                                WorkerTask::SelectWriteMemory(Some(id)),
+                                                PendingOp::Operation,
+                                            );
+                                        });
+                                    }
+                                },
+                            ))
+                            .child(quick_button(
+                                if writable {
+                                    "Pasar a solo lectura"
+                                } else {
+                                    "Permitir escritura"
+                                },
+                                ButtonVariant::Ghost,
+                                ready,
+                                {
+                                    let entity = entity.clone();
+                                    move |_, _, cx| {
+                                        entity.update(cx, |this, _| {
+                                            this.send(
+                                                WorkerTask::ConfigureMemory(id, !writable, enabled),
+                                                PendingOp::Operation,
+                                            );
+                                        });
+                                    }
+                                },
+                            ))
+                            .child(quick_button(
+                                if enabled {
+                                    "Excluir de búsquedas"
+                                } else {
+                                    "Incluir en búsquedas"
+                                },
+                                ButtonVariant::Ghost,
+                                ready,
+                                {
+                                    let entity = entity.clone();
+                                    move |_, _, cx| {
+                                        entity.update(cx, |this, _| {
+                                            this.send(
+                                                WorkerTask::ConfigureMemory(id, writable, !enabled),
+                                                PendingOp::Operation,
+                                            );
+                                        });
+                                    }
+                                },
+                            ))
+                    }),
+            )
+    }
+
     fn render_center(&mut self, entity: Entity<Self>) -> impl IntoElement {
         let is_searching = self.is_searching;
         let search_count = self.search_results.len();
@@ -1424,21 +1866,6 @@ impl LumenCatApp {
             .iter()
             .find(|d| Some(d.id) == self.current_document_id)
             .map_or(0, |d| d.segment_count);
-
-        // Request pages for segments that are not loaded yet
-        if !is_searching && let Some(doc_id) = self.current_document_id {
-            let active_ord = self.active_draft.as_ref().map_or(0, |d| d.segment.ordinal);
-            let start_page = (active_ord / 128) * 128;
-            if !self.requested_pages.contains(&start_page)
-                && !self.rows.contains_key(&active_ord)
-                && self.send(
-                    WorkerTask::Page(doc_id, start_page, String::new()),
-                    PendingOp::Page(self.generation, start_page),
-                )
-            {
-                self.requested_pages.push(start_page);
-            }
-        }
 
         div()
             .flex_1()
@@ -2143,6 +2570,7 @@ impl LumenCatApp {
 
         let entity_tm_tab = entity.clone();
         let entity_qa_tab = entity.clone();
+        let entity_term_tab = entity.clone();
 
         div()
             .w(px(310.))
@@ -2199,7 +2627,7 @@ impl LumenCatApp {
                                     cx.notify();
                                 });
                             })
-                            .child(format!("TM MATCHES ({})", matches.len())),
+                            .child(format!("TM ({})", matches.len())),
                     )
                     .child(
                         div()
@@ -2248,7 +2676,29 @@ impl LumenCatApp {
                                     cx.notify();
                                 });
                             })
-                            .child(format!("QA ALERTS ({})", qa_issues.len())),
+                            .child(format!("QA ({})", qa_issues.len())),
+                    )
+                    .child(
+                        div()
+                            .id("terms-tab")
+                            .accessibility_id("terms-tab")
+                            .role(Role::Tab)
+                            .aria_label("Terminología")
+                            .aria_selected(active_tab == RightTab::Terminology)
+                            .flex_1()
+                            .h_full()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .cursor_pointer()
+                            .text_xs()
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(if active_tab == RightTab::Terminology { Theme::sky() } else { Theme::text_muted() })
+                            .border_b_2().border_color(if active_tab == RightTab::Terminology { Theme::sky() } else { rgba(0x00000000) })
+                            .on_click(move |_, _, cx| {
+                                entity_term_tab.update(cx, |this, cx| { this.active_tab = RightTab::Terminology; cx.notify(); });
+                            })
+                            .child("Términos"),
                     ),
             )
             .child(
@@ -2317,7 +2767,7 @@ impl LumenCatApp {
                                             div()
                                                 .text_xs()
                                                 .text_color(Theme::text_secondary())
-                                                .child(format!("Src: {}", tm.source)),
+                                                .child(format!("{} · {} · Src: {}", tm.memory_name, if tm.learned_from.is_some() { "Aprendida" } else { "Importada" }, tm.source)),
                                         )
                                         .child(
                                             div()
@@ -2330,6 +2780,8 @@ impl LumenCatApp {
                                 })
                                 .collect()
                         }
+                    } else if active_tab == RightTab::Terminology {
+                        vec![self.render_terminology(entity.clone()).into_any_element()]
                     } else {
                         if qa_issues.is_empty() {
                             vec![
@@ -2489,5 +2941,42 @@ impl LumenCatApp {
                     self.message.clone()
                 })
             })
+    }
+}
+
+#[cfg(test)]
+mod cache_tests {
+    use super::trim_grid_cache;
+    use crate::model::{Origin, Segment, SegmentState};
+
+    fn segment(ordinal: usize) -> Segment {
+        Segment {
+            id: ordinal as i64 + 1,
+            document_id: 1,
+            ordinal,
+            external_id: ordinal.to_string(),
+            source: "café 世界".into(),
+            target: String::new(),
+            state: SegmentState::Draft,
+            locked: false,
+            origin: Origin::Imported,
+            revision: 0,
+        }
+    }
+
+    #[test]
+    fn viewport_cache_keeps_nearby_rows_and_evicts_previous_regions() {
+        let mut rows = (0..2048)
+            .map(|ordinal| (ordinal, segment(ordinal)))
+            .collect();
+        trim_grid_cache(&mut rows, 1500);
+        assert_eq!(rows.len(), 1024);
+        assert!((1200..1800).all(|ordinal| rows.contains_key(&ordinal)));
+        assert!(!rows.contains_key(&0));
+        rows.extend((99_000..100_000).map(|ordinal| (ordinal, segment(ordinal))));
+        trim_grid_cache(&mut rows, 99_500);
+        assert_eq!(rows.len(), 1024);
+        assert!(rows.contains_key(&99_500));
+        assert!(!rows.contains_key(&1500));
     }
 }

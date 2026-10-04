@@ -1,4 +1,13 @@
-# Estado del proyecto — 2026-09-30
+# Estado del proyecto — 2026-10-03
+
+- Encargo vigente: implementar `docs/technical/BRECHAS_TRADOS.md` por entregas y actualizar GitHub `main`. Ese permiso corresponde a este encargo, no a tareas futuras ajenas.
+- Trabajo en `feat/trados-core`, worktree `C:/Users/matia/AppData/Local/Temp/opencode/lumencat-trados`. El checkout `C:/Proyectos/LumenCAT` conserva cambios previos del usuario; no sincronizarlo ni descartarlos como efecto lateral.
+- Núcleo actual: schema v5 con respaldo antes de migrar v1–v4, idiomas persistidos, confirmación humana transaccional que aprende TM textual y actividad de contribuciones undoable. Guardar borradores no aprende; editar suspende la contribución hasta reconfirmar.
+- GPUI usa `UniformList`, páginas diferidas por viewport y caché de 1.024 filas; búsqueda aún reúne resultados completos. Corpus sintético de 100.000 filas: apertura, salto al último, edición, autoguardado y confirmación por botón comprobados en background. No p50/p95, IME/RTL ni atajos físicos acreditados.
+- F03.1: bases y conceptos multilingües, variantes/estados, Unicode y rangos originales; gestor manual GPUI y QA compartido con legacy. 47 pruebas, formato, Clippy y builds debug verificados. GUI y SQLite posterior acreditan creación, reconocimiento, término prohibido y desactivación, sin cambios en segmentos; límite de 10.000 expresiones y 512 coincidencias/incidencias por consulta. TSV/TBX y edición avanzada pendientes.
+- El diagnóstico inicial de brechas no es el estado actual. Usar su registro de avances y las guías `MEMORIAS.md`, `TERMINOLOGIA.md`, `RECUPERACION.md` y `technical/GRID_VIRTUALIZADO.md`. El plan completo sigue pendiente; no declarar paridad Trados. F13 requiere fixtures y aplicación autorizados; F18 es opcional.
+
+## Registro histórico — 2026-09-30 (no describe el estado vigente)
 
 Repo nuevo C:/Proyectos/LumenCAT, nombre provisional. Usuario autorizó trabajo autónomo y actualizaciones de herramientas si benefician espacio/eficiencia; no commits/push/deploy ni destrucción. Word/DOCX prioridad alta: adelantado a primer slice con subset explícito y preservación OOXML. No browser/computer use autorizado.
 

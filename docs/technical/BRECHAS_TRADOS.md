@@ -1,18 +1,34 @@
 # Brechas frente a Trados y plan de implementación de LumenCAT
 
-Fecha: 3 de octubre de 2026. Comparación documental de Trados y revisión estática del árbol de trabajo actual de LumenCAT (`main`, HEAD `68cd8e8`, con cambios locales). No se ejecutó Trados ni se repitió la validación GUI/Word de LumenCAT. Las prioridades son recomendaciones, no un roadmap aprobado.
+Fecha: 3 de octubre de 2026. Comparación documental de Trados y revisión estática del árbol de trabajo de LumenCAT (`main`). Actualizada tras fusionar el editor Trados con las entregas de núcleo (idiomas, memorias con aprendizaje, terminología, migraciones, virtualización). No se ejecutó Trados ni se repitió la validación GUI/Word de LumenCAT.
 
-Actualización del mismo día: el documento incluye ahora un plan técnico detallado. La autorización de esta tarea cubre documentar el plan; no se implementaron funcionalidades, migraciones ni cambios de configuración. Todos los paquetes F00–F18 están pendientes. Sus nombres de tipos, tablas y módulos nuevos son propuestas; las referencias a archivos existentes se comprobaron en el árbol actual.
+Actualización del mismo día: implementación autorizada por entregas, con publicación de avances verificados en GitHub `main`. Los nombres de tipos, tablas y módulos del plan son propuestas, no obligaciones. El registro siguiente distingue núcleo implementado, integración de interfaz y validación pendiente; un corte no acredita el paquete completo.
+
+## Avance de implementación
+
+| Paquete/corte | Estado y alcance |
+|---|---|
+| F00.1/F00.2 | PASS del núcleo: backup SQLite cancelable sin sobrescritura, recuperación a copia nueva, migración v1→v2 con respaldo e historial agrupado durable. `cargo test --locked --tests`: 33 pruebas; `cargo fmt --check` y Clippy all-targets sin errores. UI de respaldo/recuperación pendiente. |
+| F01.1 | PASS del núcleo: idiomas persistidos y validación de conflicto XLIFF; controles GPUI y legacy integrados. `cargo test --locked --tests`: 35 pruebas. Ventana GPUI aislada inspeccionada; recorrido interactivo pendiente porque el transporte de teclado background rechazó `Zed::Window` y no se autorizó tomar el foco. |
+| F02.1/F02.2 | PASS del núcleo: colecciones, lectura/escritura, selección/desactivación de aprendizaje y confirmación transaccional; correcciones suspenden contribuciones y undo/redo restaura actividad. Esquema v4 con backup desde v1/v2/v3. 41 pruebas, Clippy all-targets y build debug de ambas interfaces. Integración GPUI/legacy hecha; interacción física pendiente. Prioridades, penalizaciones, códigos aprendidos y procedencias agregadas pendientes. |
+| F03.1 | PASS del corte: bases activables, conceptos multilingües con variantes/estados/notas/dominio/procedencia, reconocimiento por palabras, offsets originales, QA de ausencia/prohibición y ambigüedad conservadora. Esquema v5 con respaldo desde v1–v4. 47 pruebas, Clippy y builds debug. GPUI background comprobó creación, entrada manual, reconocimiento, QA y desactivación; persistencia y comparación contra respaldo acreditan que los segmentos no cambiaron. TSV/TBX, edición avanzada, excepciones y resaltado pendientes. Ver [terminología](../guides/TERMINOLOGIA.md). |
+| F04 (validación DOCX) | Primer corte: confirmación y exportación reutilizan la validación de códigos/estructura de destino. No acredita todavía IR general de códigos ni remapeo TM. |
+| F17.1 | PASS del corte: virtualización nativa del grid (`ListState` con alturas variables tras el merge del editor Trados), páginas por viewport con overscan y caché acotada (`trim_grid_cache`). 42 pruebas, formato, Clippy y builds debug. Proyecto sintético de 100.000 segmentos abierto; selección, búsqueda del último, retorno al grid, edición, autoguardado y confirmación por botón comprobados en GPUI background; lectura SQLite posterior confirma durabilidad. Ver [evidencia y límites](GRID_VIRTUALIZADO.md). |
+| Resto de F03/F04, F05–F16 y resto de F17 | Pendientes. F18 sigue siendo una decisión de producto opcional, no una dependencia del núcleo local. |
+
+Los respaldos y migraciones se prueban únicamente sobre proyectos temporales. Ver [recuperación de proyectos](../guides/RECUPERACION.md).
 
 ## Conclusión
 
-LumenCAT cubre el núcleo inicial: editor bilingüe, confirmación y bloqueos, guardado e historial, TMX con coincidencias exactas/fuzzy y concordancia, QA textual y exportación TXT/XLIFF/DOCX. Las brechas principales son memoria que aprende al confirmar, terminología, cobertura documental, segmentación lingüística, reutilización por lotes y entrega/revisión para agencias. La asistencia LLM tampoco está implementada y Trados ya ofrece integración de IA: por sí sola no constituiría una diferenciación.
+LumenCAT cubre el núcleo inicial: editor bilingüe, confirmación y bloqueos, guardado e historial, TMX con coincidencias exactas/fuzzy y concordancia, QA textual y exportación TXT/XLIFF/DOCX. Las primeras entregas añaden aprendizaje TM textual y terminología local; todavía quedan alcance avanzado de esos recursos, cobertura documental, segmentación lingüística, reutilización por lotes y entrega/revisión para agencias. La asistencia LLM tampoco está implementada y Trados ya ofrece integración de IA: por sí sola no constituiría una diferenciación.
 
 La web oficial ya anuncia Studio 2026 Release; algunos resultados indexados todavía describen 2024. Para capacidades consolidadas se usan también manuales, SDK y formación oficial de versiones anteriores, identificando su alcance. No se certifica la matriz comercial completa de 2026.
 
 ## Matriz de brechas
 
 «Ausente» significa que no se encontró un flujo implementado en los módulos, almacenamiento y UI examinados. «Parcial» significa que existe una base, pero no equivalencia funcional. Los números de línea corresponden al árbol examinado y pueden desplazarse.
+
+La matriz conserva el diagnóstico del árbol inicial `68cd8e8`; el registro de avances anterior describe los cortes implementados después. No interpretar una ausencia histórica como el estado del código actual.
 
 | Función documentada de Trados | Estado de LumenCAT y evidencia local | Impacto práctico |
 |---|---|---|
@@ -45,7 +61,7 @@ No hace falta copiar toda la plataforma. Cloud, colaboración centralizada y ges
 
 - La comprobación de LumenCAT fue estática: no prueba ergonomía, rendimiento, accesibilidad ni compatibilidad universal de los formatos.
 - `docs/PRODUCT.md` conserva límites antiguos que dicen que DOCX rechaza formato mixto y dibujos. El parser actual y `docs/technical/CONTINUACION_DOCX.md` reflejan soporte de formato mixto e imágenes estáticas. Conviene reconciliarlo en una tarea aparte; no se modificó aquí.
-- GPUI solicita datos por páginas, pero construye filas para `0..count` dentro de un contenedor con scroll (`src/gpui_app/mod.rs:1593`). Esa paginación no constituye virtualización visual. No se midió su rendimiento ni se compara con Trados.
+- El árbol de referencia construía filas para `0..count` aunque solicitaba datos por páginas. F17.1 y el editor Trados sustituyen ese recorrido por virtualización nativa (`ListState`); con 2.000 segmentos la UIA expone solo las ~14 filas visibles (`output/verification/e2e-perf-004`). La búsqueda aún reúne resultados completos y no hay métricas p50/p95 ni comparación de rendimiento con Trados.
 - Algunas páginas devolvieron protección JavaScript o 403; la lista detallada de filtros no pudo consultarse íntegra. Se usaron páginas oficiales accesibles, resultados indexados oficiales y fuentes alternativas RWS. No se dedujo una lista exhaustiva ni la disponibilidad de todos los filtros en cada edición.
 - Studio 2026 se verificó documentalmente en páginas oficiales actuales; las funciones históricas aquí citadas no se probaron en una instalación de esa versión. La edición exacta, cuota y licencia de servicios conectados requieren comprobación al comprar o integrar.
 

@@ -14,6 +14,7 @@ enum Pending {
     Search(u64),
     Select(u64),
     Save(u64),
+    Confirm(u64),
     Matches(u64),
     History,
     Close,
@@ -37,6 +38,9 @@ impl Draft {
     fn acknowledge(&mut self, segment: &Segment, serial: u64) {
         if segment.id == self.segment.id {
             self.segment.revision = segment.revision;
+            if self.serial == serial {
+                self.segment = segment.clone();
+            }
             self.saved = serial;
             self.saving = false;
         }
@@ -60,6 +64,7 @@ pub struct CatApp {
     requested_pages: Vec<usize>,
     active: Option<Draft>,
     navigate: Option<Navigation>,
+    confirmation_intent: Option<ConfirmationIntent>,
     matches: Vec<TmMatch>,
     qa: Vec<QaIssue>,
     query: String,
@@ -100,6 +105,7 @@ impl CatApp {
             requested_pages: Vec::new(),
             active: None,
             navigate: None,
+            confirmation_intent: None,
             matches: Vec::new(),
             qa: Vec::new(),
             query: String::new(),
@@ -151,9 +157,11 @@ impl CatApp {
         })
     }
     fn dirty(&self) -> bool {
-        self.active
-            .as_ref()
-            .is_some_and(|a| a.serial != a.saved || a.saving)
+        self.confirmation_intent.is_some()
+            || self
+                .active
+                .as_ref()
+                .is_some_and(|a| a.serial != a.saved || a.saving)
     }
     fn invalidate(&mut self) {
         self.cancel_lookups();
@@ -183,6 +191,7 @@ impl CatApp {
         }
     }
     fn changed(&mut self, origin: Origin) {
+        self.confirmation_intent = None;
         if let Some(active) = &mut self.active {
             if active.serial == active.saved {
                 active.first_dirty = Instant::now();
@@ -198,15 +207,24 @@ impl CatApp {
             return;
         }
         let Some(active) = &self.active else { return };
+        if self.confirmation_intent.is_some_and(|intent| {
+            intent.segment_id != active.segment.id || intent.serial != active.serial
+        }) {
+            self.confirmation_intent = None;
+        }
         if active.segment.target.len() > 1_048_576 {
             self.save_error = true;
             self.message="El target supera el límite de 1 MiB por segmento del MVP. El texto completo permanece en el editor; redúcelo o recupera un borrador en un archivo nuevo.".into();
             return;
         }
-        if active.saving || active.serial == active.saved {
+        let confirming = self.confirmation_intent.is_some_and(|intent| {
+            intent.segment_id == active.segment.id && intent.serial == active.serial
+        });
+        if active.saving || (active.serial == active.saved && !confirming) {
             return;
         }
         if !force
+            && !confirming
             && active.changed.elapsed() < Duration::from_millis(250)
             && active.first_dirty.elapsed() < Duration::from_millis(500)
         {
@@ -221,11 +239,32 @@ impl CatApp {
             locked: active.segment.locked,
             origin: active.segment.origin,
         };
-        if self.send(Task::Edit(command), Pending::Save(serial))
+        let (task, pending) = if confirming {
+            (Task::Confirm(command), Pending::Confirm(serial))
+        } else {
+            (Task::Edit(command), Pending::Save(serial))
+        };
+        if self.send(task, pending)
             && let Some(active) = &mut self.active
         {
             active.saving = true;
         }
+    }
+    fn confirm_and_next(&mut self) {
+        let Some(active) = &self.active else {
+            return;
+        };
+        if active.segment.locked || active.segment.target.trim().is_empty() {
+            self.message =
+                "Introduce una traducción y desbloquea el segmento antes de confirmar".into();
+            return;
+        }
+        self.confirmation_intent = Some(ConfirmationIntent {
+            segment_id: active.segment.id,
+            serial: active.serial,
+            advance: true,
+        });
+        self.save(true);
     }
     fn poll(&mut self) {
         while let Ok(reply) = self.worker.receiver.try_recv() {
@@ -245,11 +284,13 @@ impl CatApp {
             }
             match reply.result {
                 Err(error) => {
-                    if matches!(pending, Pending::Save(_)) {
-                        self.save_error = true;
+                    if matches!(pending, Pending::Save(_) | Pending::Confirm(_)) {
+                        self.save_error = !(matches!(pending, Pending::Confirm(_))
+                            && matches!(error, CatError::Format(_)));
                         if let Some(a) = &mut self.active {
                             a.saving = false;
                         }
+                        self.confirmation_intent = None;
                     }
                     if matches!(pending, Pending::Close) {
                         self.closing = false;
@@ -260,11 +301,24 @@ impl CatApp {
                 }
                 Ok(data) => match data {
                     Data::Progress(_, _, _) => {}
-                    Data::Opened(recovered, docs) => {
+                    Data::Opened(recovered, docs, settings, backup) => {
                         self.opened = true;
                         self.documents = docs;
+                        self.source_lang = settings.source_lang;
+                        self.target_lang = settings.target_lang;
                         self.message = if recovered { "Se recuperó un cierre no limpio. SQLite validó la base; revisa el último segmento." } else { "Proyecto local abierto. Los cambios se guardan de forma transaccional." }.into();
+                        if let Some(backup) = backup {
+                            self.message =
+                                format!("Proyecto migrado con respaldo en {}", backup.display());
+                        }
                     }
+                    Data::Settings(settings) => {
+                        self.source_lang = settings.source_lang;
+                        self.target_lang = settings.target_lang;
+                        self.message = "Idiomas de importación guardados".into();
+                    }
+                    Data::Memories(_, _) => {}
+                    Data::TermBases(_, _) | Data::TermAdded(_) => {}
                     Data::Documents(docs) => {
                         self.documents = docs;
                         self.message = "Documentos actualizados".into();
@@ -330,6 +384,43 @@ impl CatApp {
                             self.message = "Cambios guardados en disco".into();
                         }
                         self.request_qa();
+                        if let Some(active) = &self.active {
+                            let source = active.segment.source.clone();
+                            let (sl, tl) = self.document_languages();
+                            self.lookup(source, sl, tl, false);
+                        }
+                    }
+                    Data::Confirmed(result) => {
+                        let segment = result.segment;
+                        if let (Pending::Confirm(serial), Some(active)) =
+                            (pending, &mut self.active)
+                            && segment.id == active.segment.id
+                        {
+                            active.acknowledge(&segment, serial);
+                            self.rows.insert(segment.ordinal, segment);
+                            let intent = self.confirmation_intent.filter(|intent| {
+                                intent.serial == serial && intent.segment_id == active.segment.id
+                            });
+                            if intent.is_some() {
+                                self.confirmation_intent = None;
+                            }
+                            let advance =
+                                intent.is_some_and(|i| i.advance) && active.serial == serial;
+                            self.message = match result.learning {
+                                LearningOutcome::Learned => "Confirmado y aprendido en TM",
+                                LearningOutcome::Disabled => {
+                                    "Confirmado sin memoria de escritura compatible"
+                                }
+                                LearningOutcome::UnsupportedCodes => {
+                                    "Confirmado sin aprender códigos DOCX (todavía no soportados)"
+                                }
+                            }
+                            .into();
+                            if advance {
+                                self.move_segment(1);
+                            }
+                        }
+                        self.request_qa();
                     }
                     Data::History(segment) => {
                         self.invalidate();
@@ -364,7 +455,7 @@ impl CatApp {
                         self.message = message;
                     }
                     Data::Closed => self.closed = true,
-                    Data::Qa(issues) => {
+                    Data::Qa(issues, _) => {
                         if matches!(pending, Pending::Qa(g,s) if g == self.selection_generation && self.active.as_ref().is_some_and(|a|a.serial==s))
                         {
                             self.qa = issues;
@@ -372,6 +463,9 @@ impl CatApp {
                     }
                 },
             }
+        }
+        if self.confirmation_intent.is_some() {
+            self.save(true);
         }
         if !self.dirty()
             && let Some(id) = self.navigate.take()
@@ -424,6 +518,7 @@ impl CatApp {
     fn request_qa(&mut self) {
         if let Some(a) = &self.active {
             let task = Task::Qa(
+                a.segment.document_id,
                 a.segment.source.clone(),
                 a.segment.target.clone(),
                 a.segment.state == SegmentState::Confirmed,
@@ -525,6 +620,21 @@ impl eframe::App for CatApp {
                 ui.add(egui::TextEdit::singleline(&mut self.source_lang).desired_width(45.0));
                 ui.label("Destino");
                 ui.add(egui::TextEdit::singleline(&mut self.target_lang).desired_width(45.0));
+                if ui
+                    .add_enabled(
+                        self.opened && !self.busy() && !self.dirty(),
+                        egui::Button::new("Guardar idiomas"),
+                    )
+                    .clicked()
+                {
+                    self.send(
+                        Task::SetSettings(ProjectSettings {
+                            source_lang: self.source_lang.clone(),
+                            target_lang: self.target_lang.clone(),
+                        }),
+                        Pending::Operation,
+                    );
+                }
                 ui.add(
                     egui::TextEdit::singleline(&mut self.file_path)
                         .desired_width(380.0)
@@ -652,10 +762,6 @@ impl eframe::App for CatApp {
                     }
                 }
                 if let Some(id) = selected {
-                    if let Some(doc) = self.documents.iter().find(|d| d.id == id) {
-                        self.source_lang = doc.source_lang.clone();
-                        self.target_lang = doc.target_lang.clone();
-                    }
                     self.document = Some(id);
                     self.active = None;
                     self.matches.clear();
@@ -753,7 +859,7 @@ impl eframe::App for CatApp {
             if copied { if let Some(a) = &mut self.active { a.segment.target = a.segment.source.clone(); } changed = true; }
             if changed { self.changed(Origin::Human); }
             if locked && let Some(a)=&mut self.active { if a.serial==a.saved {a.first_dirty=Instant::now();} a.serial+=1; a.changed=Instant::now(); self.save(true); }
-            if confirmed && editor_enabled && let Some(a) = &mut self.active && !a.segment.locked { a.serial += 1; a.segment.state = SegmentState::Confirmed; a.changed = Instant::now(); self.save(true); self.move_segment(1); }
+            if confirmed && editor_enabled { self.confirm_and_next(); }
         });
         if self.recovery_dialog {
             let mut open = true;

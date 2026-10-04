@@ -174,3 +174,134 @@ fn unicode_memory_language_isolation_and_atomic_export() -> Result<()> {
     store.close()?;
     Ok(())
 }
+
+#[test]
+fn grouped_edits_survive_restart_and_conflicts_roll_back() -> Result<()> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("group.lcat");
+    let mut store = ProjectStore::open(&path)?;
+    let first = store.import_document(&document(), &Cancellation::default())?;
+    let second = store.import_document(&document(), &Cancellation::default())?;
+    let a = store.page(first, 0, 1, "")?.remove(0);
+    let b = store.page(second, 0, 1, "")?.remove(0);
+    store.edit_batch(
+        &[edit(&a, "Hola", false), edit(&b, "Buenas", false)],
+        &Cancellation::default(),
+    )?;
+    store.close()?;
+    drop(store);
+    let mut store = ProjectStore::open_existing(&path)?;
+    assert_eq!(store.undo_group()?.len(), 2);
+    assert_eq!(store.segment(a.id)?.target, "");
+    assert_eq!(store.segment(b.id)?.target, "");
+    assert_eq!(store.redo_group()?.len(), 2);
+    let current = store.segment(a.id)?;
+    assert!(
+        store
+            .edit_batch(
+                &[
+                    edit(&current, "fallará", false),
+                    edit(&b, "obsoleto", false)
+                ],
+                &Cancellation::default()
+            )
+            .is_err()
+    );
+    assert_eq!(store.segment(a.id)?.target, "Hola");
+    assert_eq!(store.segment(a.id)?.revision, current.revision);
+    let cancel = Cancellation::default();
+    cancel.cancel();
+    assert!(matches!(
+        store.edit_batch(&[edit(&current, "cancelado", false)], &cancel),
+        Err(CatError::Cancelled)
+    ));
+    store.undo_group()?;
+    store.edit(&edit(&store.segment(a.id)?, "Nueva rama", false))?;
+    assert!(store.redo_group()?.is_empty());
+    assert_eq!(store.segment(b.id)?.target, "");
+    store.close()?;
+    Ok(())
+}
+
+#[test]
+fn backup_includes_wal_and_recovery_never_overwrites() -> Result<()> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("original.lcat");
+    let backup = directory.path().join("backup.lcat");
+    let recovered = directory.path().join("recovered.lcat");
+    let mut store = ProjectStore::open(&path)?;
+    let id = store.import_document(&document(), &Cancellation::default())?;
+    let segment = store.page(id, 0, 1, "")?.remove(0);
+    store.edit(&edit(&segment, "最新 café 🙂", false))?;
+    assert!(path.with_extension("lcat-wal").exists());
+    store.backup_to(&backup, &Cancellation::default())?;
+    assert!(store.backup_to(&backup, &Cancellation::default()).is_err());
+    let copy = rusqlite::Connection::open(&backup)?;
+    assert_eq!(
+        copy.query_row("SELECT target FROM segments", [], |r| r.get::<_, String>(0))?,
+        "最新 café 🙂"
+    );
+    drop(copy);
+    ProjectStore::recover_copy(&backup, &recovered, &Cancellation::default())?;
+    assert!(ProjectStore::recover_copy(&backup, &path, &Cancellation::default()).is_err());
+    let mut restored = ProjectStore::open_existing(&recovered)?;
+    assert_eq!(restored.segment(segment.id)?.target, "最新 café 🙂");
+    assert_eq!(restored.undo()?.map(|s| s.target), Some(String::new()));
+    restored.close()?;
+    assert_eq!(store.segment(segment.id)?.target, "最新 café 🙂");
+    store.close()?;
+    let missing = directory.path().join("missing.lcat");
+    assert!(ProjectStore::open_existing(&missing).is_err());
+    assert!(!missing.exists());
+    Ok(())
+}
+
+#[test]
+fn project_languages_persist_without_relabelling_documents() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("languages.lcat");
+    let mut store = ProjectStore::open(&path)?;
+    let settings = ProjectSettings {
+        source_lang: "fr".into(),
+        target_lang: "es".into(),
+    };
+    store.set_settings(&settings)?;
+    for source in ["", "fr--CA", "../fr", "fr\nes", "x", "fr_FR"] {
+        assert!(
+            store
+                .set_settings(&ProjectSettings {
+                    source_lang: source.into(),
+                    target_lang: "es".into()
+                })
+                .is_err()
+        );
+    }
+    let source = dir.path().join("french.txt");
+    std::fs::write(&source, "Bonjour\r\n")?;
+    let imported = lumencat::formats::import_document(
+        &source,
+        &settings.source_lang,
+        &settings.target_lang,
+        &Cancellation::default(),
+    )?;
+    let id = store.import_document(&imported, &Cancellation::default())?;
+    let row = store.page(id, 0, 1, "")?.remove(0);
+    store.edit(&edit(&row, "Hola", false))?;
+    let doc = store.load_document(id)?;
+    let output = dir.path().join("spanish.txt");
+    lumencat::formats::export_document(&doc, &["Hola".into()], &output, &Cancellation::default())?;
+    assert_eq!(std::fs::read_to_string(output)?, "Hola\r\n");
+    store.set_settings(&ProjectSettings {
+        source_lang: "pt-BR".into(),
+        target_lang: "pt-PT".into(),
+    })?;
+    store.close()?;
+    drop(store);
+    let mut reopened = ProjectStore::open_existing(&path)?;
+    assert_eq!(reopened.settings()?.source_lang, "pt-BR");
+    assert_eq!(reopened.settings()?.target_lang, "pt-PT");
+    assert_eq!(reopened.documents()?[0].source_lang, "fr");
+    assert_eq!(reopened.segment(row.id)?.target, "Hola");
+    reopened.close()?;
+    Ok(())
+}

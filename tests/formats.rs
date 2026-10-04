@@ -88,6 +88,28 @@ fn xml_subset_rejects_constructs_that_would_lose_structure() -> Result<()> {
 }
 
 #[test]
+fn xliff_language_conflicts_are_explicit_and_regions_not_relabelled() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("portuguese.xlf");
+    let xml = r#"<xliff version="1.2"><file source-language="pt-BR" target-language="es"><body><trans-unit id="1"><source>Olá</source></trans-unit></body></file></xliff>"#;
+    fs::write(&path, xml)?;
+    let cancel = Cancellation::default();
+    assert!(import_document(&path, "pt-PT", "es", &cancel).is_err());
+    assert!(import_document(&path, "pt-BR", "fr", &cancel).is_err());
+    let doc = import_document(&path, "pt-BR", "es", &cancel)?;
+    assert_eq!(doc.source_lang, "pt-BR");
+    assert_eq!(doc.segments[0].source, "Olá");
+    let output = serialize_document(&doc, &["Hola".into()], &cancel)?;
+    assert!(
+        std::str::from_utf8(&output)
+            .map_err(|e| CatError::Format(e.to_string()))?
+            .contains("source-language=\"pt-BR\"")
+    );
+    assert_eq!(fs::read(&path)?, xml.as_bytes());
+    Ok(())
+}
+
+#[test]
 fn xliff_human_state_and_locks_roundtrip_without_stale_review_approval() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let path = dir.path().join("state.xlf");

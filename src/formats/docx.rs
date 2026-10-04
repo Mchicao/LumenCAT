@@ -973,6 +973,73 @@ fn target_parts(target: &str) -> Result<Vec<TargetPart>> {
     Ok(parts)
 }
 
+pub fn validate_target(source: &str, target: &str) -> Result<()> {
+    checked_target_parts(source, target)?;
+    Ok(())
+}
+
+fn checked_target_parts(source: &str, target: &str) -> Result<Vec<TargetPart>> {
+    if target.is_empty()
+        || target.chars().any(|c| !super::xml_char(c))
+        || target.contains(['\r', '\n', '\t'])
+    {
+        return Err(invalid(
+            "Traducción DOCX vacía, multilínea o con caracteres XML inválidos",
+        ));
+    }
+    let source_parts = target_parts(source)?;
+    let g_count = source_parts
+        .iter()
+        .filter(|p| matches!(p, TargetPart::GOpen(_)))
+        .count();
+    let x_count = source_parts
+        .iter()
+        .filter(|p| matches!(p, TargetPart::X(_)))
+        .count();
+    let parts = target_parts(target)?;
+    let mut seen_g = vec![false; g_count];
+    let mut seen_x = vec![false; x_count];
+    let mut text_present = vec![false; g_count + 1];
+    let mut open = None;
+    for part in &parts {
+        match part {
+            TargetPart::Text(text) => text_present[open.unwrap_or(0)] |= !text.is_empty(),
+            TargetPart::GOpen(id) => {
+                if open.is_some() || *id == 0 || *id > g_count || seen_g[*id - 1] {
+                    return Err(invalid(
+                        "Código <g> desconocido, duplicado o anidado en la traducción DOCX",
+                    ));
+                }
+                seen_g[*id - 1] = true;
+                open = Some(*id);
+            }
+            TargetPart::GClose => {
+                if open.take().is_none() {
+                    return Err(invalid("Cierre </g> sin apertura en la traducción DOCX"));
+                }
+            }
+            TargetPart::X(id) => {
+                if *id == 0 || *id > x_count || seen_x[*id - 1] {
+                    return Err(invalid(
+                        "Código <x/> desconocido o duplicado en la traducción DOCX",
+                    ));
+                }
+                seen_x[*id - 1] = true;
+            }
+        }
+    }
+    if open.is_some()
+        || seen_g.contains(&false)
+        || seen_x.contains(&false)
+        || text_present.contains(&false)
+    {
+        return Err(invalid(
+            "Faltan códigos, cierre o texto de una región en la traducción DOCX",
+        ));
+    }
+    Ok(parts)
+}
+
 fn emit_run(output: &mut String, rpr: Option<&[u8]>, text: &str) -> Result<()> {
     if text.is_empty() {
         return Ok(());
@@ -1019,7 +1086,7 @@ fn rebuild_paragraph(
     cancel: &Cancellation,
 ) -> Result<String> {
     cancel.check()?;
-    let parts = target_parts(target)?;
+    let parts = checked_target_parts(&slot.text, target)?;
     let base = slot
         .flow
         .iter()
@@ -1029,8 +1096,6 @@ fn rebuild_paragraph(
         })
         .unwrap_or(0);
     let mut open: Option<usize> = None;
-    let mut seen_g = vec![false; slot.g_ids.len()];
-    let mut seen_x = vec![false; slot.graphics.len()];
     let mut buckets = vec![String::new(); slot.g_ids.len() + 1];
     let mut pending = String::new();
     let mut output = String::new();
@@ -1040,18 +1105,6 @@ fn rebuild_paragraph(
         match part {
             TargetPart::Text(text) => pending.push_str(&text),
             TargetPart::GOpen(id) => {
-                if open.is_some() {
-                    return Err(invalid(
-                        "códigos <g> anidados no permitidos en la traducción DOCX",
-                    ));
-                }
-                if id == 0 || id > slot.g_ids.len() {
-                    return Err(invalid("código <g> desconocido en la traducción DOCX"));
-                }
-                if seen_g[id - 1] {
-                    return Err(invalid("código <g> duplicado en la traducción DOCX"));
-                }
-                seen_g[id - 1] = true;
                 flush_target_text(&mut output, &mut pending, open, slot, base, &mut buckets)?;
                 open = Some(id);
             }
@@ -1069,13 +1122,6 @@ fn rebuild_paragraph(
                 )?;
             }
             TargetPart::X(id) => {
-                if id == 0 || id > slot.graphics.len() {
-                    return Err(invalid("código <x/> desconocido en la traducción DOCX"));
-                }
-                if seen_x[id - 1] {
-                    return Err(invalid("código <x/> duplicado en la traducción DOCX"));
-                }
-                seen_x[id - 1] = true;
                 flush_target_text(&mut output, &mut pending, open, slot, base, &mut buckets)?;
                 let (start, end) = slot.graphics[id - 1];
                 output.push_str(&xml[start..end]);
@@ -1084,24 +1130,6 @@ fn rebuild_paragraph(
     }
     flush_target_text(&mut output, &mut pending, open, slot, base, &mut buckets)?;
     output.push_str(&xml[slot.last_end..slot.content.1]);
-    if open.is_some() {
-        return Err(invalid("código <g> sin cerrar en la traducción DOCX"));
-    }
-    if seen_g.iter().any(|seen| !seen) {
-        return Err(invalid(
-            "traducción DOCX sin todos los códigos <g> del original",
-        ));
-    }
-    if seen_x.iter().any(|seen| !seen) {
-        return Err(invalid(
-            "traducción DOCX sin todos los códigos <x/> del original",
-        ));
-    }
-    if buckets.iter().any(|bucket| bucket.is_empty()) {
-        return Err(invalid(
-            "traducción DOCX con región de formato sin texto; traduzca cada fragmento",
-        ));
-    }
     Ok(output)
 }
 

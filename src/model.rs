@@ -137,6 +137,42 @@ pub struct EditCommand {
     pub locked: bool,
     pub origin: Origin,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectSettings {
+    pub source_lang: String,
+    pub target_lang: String,
+}
+
+impl ProjectSettings {
+    pub fn validate(&self) -> Result<()> {
+        validate_language(&self.source_lang)?;
+        validate_language(&self.target_lang)?;
+        if self.source_lang.eq_ignore_ascii_case(&self.target_lang) {
+            return Err(CatError::Invalid(
+                "Elige idiomas de origen y destino diferentes".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+pub fn validate_language(language: &str) -> Result<()> {
+    let mut subtags = language.split('-');
+    let primary = subtags.next().unwrap_or_default();
+    if language.len() > 63
+        || !(2..=8).contains(&primary.len())
+        || !primary.bytes().all(|b| b.is_ascii_alphabetic())
+        || subtags.any(|part| {
+            part.is_empty() || part.len() > 8 || !part.bytes().all(|b| b.is_ascii_alphanumeric())
+        })
+    {
+        return Err(CatError::Invalid(
+            "Idioma inválido: usa un código como fr, es, pt-BR o zh-Hant".into(),
+        ));
+    }
+    Ok(())
+}
 #[derive(Debug, Clone)]
 pub struct TmUnit {
     pub source: String,
@@ -152,6 +188,127 @@ pub struct TmMatch {
     pub target: String,
     pub score: f64,
     pub exact: bool,
+    pub memory_id: i64,
+    pub memory_name: String,
+    pub learned_from: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct MemoryCollection {
+    pub id: i64,
+    pub name: String,
+    pub source_lang: String,
+    pub target_lang: String,
+    pub writable: bool,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TermStatus {
+    Preferred,
+    Allowed,
+    Forbidden,
+}
+
+impl TermStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Preferred => "preferred",
+            Self::Allowed => "allowed",
+            Self::Forbidden => "forbidden",
+        }
+    }
+
+    pub fn parse(value: &str) -> Result<Self> {
+        match value {
+            "preferred" => Ok(Self::Preferred),
+            "allowed" => Ok(Self::Allowed),
+            "forbidden" => Ok(Self::Forbidden),
+            _ => Err(CatError::Invalid("Estado terminológico desconocido".into())),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct TermBase {
+    pub id: i64,
+    pub name: String,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct TermExpression {
+    pub language: String,
+    pub text: String,
+    pub status: TermStatus,
+    pub case_sensitive: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewTermConcept {
+    pub base_id: i64,
+    pub domain: String,
+    pub notes: String,
+    pub provenance: String,
+    pub expressions: Vec<TermExpression>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TermConcept {
+    pub id: i64,
+    pub base_id: i64,
+    pub base_name: String,
+    pub domain: String,
+    pub notes: String,
+    pub provenance: String,
+    pub expressions: Vec<TermExpression>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TermMatch {
+    pub concept_id: i64,
+    pub base_name: String,
+    pub source: String,
+    pub source_range: std::ops::Range<usize>,
+    pub targets: Vec<TermExpression>,
+    pub domain: String,
+    pub notes: String,
+    pub provenance: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct TermIssue {
+    pub code: &'static str,
+    pub message: String,
+    pub concept_id: i64,
+    pub source_range: std::ops::Range<usize>,
+    pub target_range: Option<std::ops::Range<usize>>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct TerminologyResult {
+    pub matches: Vec<TermMatch>,
+    pub issues: Vec<TermIssue>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LearningOutcome {
+    Learned,
+    Disabled,
+    UnsupportedCodes,
+}
+
+#[derive(Debug, Clone)]
+pub struct ConfirmationResult {
+    pub segment: Segment,
+    pub learning: LearningOutcome,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ConfirmationIntent {
+    pub segment_id: i64,
+    pub serial: u64,
+    pub advance: bool,
 }
 #[derive(Debug, Clone)]
 pub struct QaIssue {

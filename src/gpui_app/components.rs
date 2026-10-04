@@ -98,6 +98,20 @@ where
     btn.on_click(on_click_handler).child(label)
 }
 
+pub fn quick_button<F>(
+    label: impl Into<SharedString>,
+    variant: ButtonVariant,
+    enabled: bool,
+    on_click_handler: F,
+) -> Stateful<Div>
+where
+    F: Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+{
+    let label = label.into();
+    let id: SharedString = format!("btn-{label}").into();
+    custom_button(id, label, variant, enabled, on_click_handler)
+}
+
 pub fn history_button<F>(redo: bool, enabled: bool, handler: F) -> impl IntoElement
 where
     F: Fn(&ClickEvent, &mut Window, &mut App) + 'static,

@@ -8,6 +8,13 @@ pub enum InputField {
     Target,
     Search,
     Replacement,
+    SourceLanguage,
+    TargetLanguage,
+    MemoryName,
+    TermBaseName,
+    TermSource,
+    TermTarget,
+    TermNotes,
 }
 
 impl InputField {
@@ -16,6 +23,13 @@ impl InputField {
             Self::Target => "target-editor",
             Self::Search => "search-query",
             Self::Replacement => "replacement-text",
+            Self::SourceLanguage => "source-language",
+            Self::TargetLanguage => "target-language",
+            Self::MemoryName => "memory-name",
+            Self::TermBaseName => "term-base-name",
+            Self::TermSource => "term-source",
+            Self::TermTarget => "term-target",
+            Self::TermNotes => "term-notes",
         }
     }
 
@@ -24,6 +38,13 @@ impl InputField {
             Self::Target => "Destino",
             Self::Search => "Buscar en origen y destino",
             Self::Replacement => "Texto de reemplazo",
+            Self::SourceLanguage => "Idioma de origen",
+            Self::TargetLanguage => "Idioma de destino",
+            Self::MemoryName => "Nombre de memoria",
+            Self::TermBaseName => "Nombre de base terminológica",
+            Self::TermSource => "Término de origen",
+            Self::TermTarget => "Equivalencia de destino",
+            Self::TermNotes => "Notas del término",
         }
     }
 }
@@ -89,6 +110,13 @@ impl LumenCatApp {
             }
             InputField::Search => self.search_input.set_text(value),
             InputField::Replacement => self.replacement_input.set_text(value),
+            InputField::SourceLanguage => self.source_language_input.set_text(value),
+            InputField::TargetLanguage => self.target_language_input.set_text(value),
+            InputField::MemoryName => self.memory_name_input.set_text(value),
+            InputField::TermBaseName => self.term_base_name_input.set_text(value),
+            InputField::TermSource => self.term_source_input.set_text(value),
+            InputField::TermTarget => self.term_target_input.set_text(value),
+            InputField::TermNotes => self.term_notes_input.set_text(value),
         }
     }
 
@@ -97,6 +125,20 @@ impl LumenCatApp {
             &self.search_input
         } else if self.replacement_input.focus_handle.is_focused(window) {
             &self.replacement_input
+        } else if self.source_language_input.focus_handle.is_focused(window) {
+            &self.source_language_input
+        } else if self.target_language_input.focus_handle.is_focused(window) {
+            &self.target_language_input
+        } else if self.memory_name_input.focus_handle.is_focused(window) {
+            &self.memory_name_input
+        } else if self.term_base_name_input.focus_handle.is_focused(window) {
+            &self.term_base_name_input
+        } else if self.term_source_input.focus_handle.is_focused(window) {
+            &self.term_source_input
+        } else if self.term_target_input.focus_handle.is_focused(window) {
+            &self.term_target_input
+        } else if self.term_notes_input.focus_handle.is_focused(window) {
+            &self.term_notes_input
         } else {
             &self.target_input
         }
@@ -106,6 +148,20 @@ impl LumenCatApp {
             &mut self.search_input
         } else if self.replacement_input.focus_handle.is_focused(window) {
             &mut self.replacement_input
+        } else if self.source_language_input.focus_handle.is_focused(window) {
+            &mut self.source_language_input
+        } else if self.target_language_input.focus_handle.is_focused(window) {
+            &mut self.target_language_input
+        } else if self.memory_name_input.focus_handle.is_focused(window) {
+            &mut self.memory_name_input
+        } else if self.term_base_name_input.focus_handle.is_focused(window) {
+            &mut self.term_base_name_input
+        } else if self.term_source_input.focus_handle.is_focused(window) {
+            &mut self.term_source_input
+        } else if self.term_target_input.focus_handle.is_focused(window) {
+            &mut self.term_target_input
+        } else if self.term_notes_input.focus_handle.is_focused(window) {
+            &mut self.term_notes_input
         } else {
             &mut self.target_input
         }
@@ -117,7 +173,14 @@ impl LumenCatApp {
         window: &Window,
     ) -> Option<Range<usize>> {
         let target = !self.search_input.focus_handle.is_focused(window)
-            && !self.replacement_input.focus_handle.is_focused(window);
+            && !self.replacement_input.focus_handle.is_focused(window)
+            && !self.source_language_input.focus_handle.is_focused(window)
+            && !self.target_language_input.focus_handle.is_focused(window)
+            && !self.memory_name_input.focus_handle.is_focused(window)
+            && !self.term_base_name_input.focus_handle.is_focused(window)
+            && !self.term_source_input.focus_handle.is_focused(window)
+            && !self.term_target_input.focus_handle.is_focused(window)
+            && !self.term_notes_input.focus_handle.is_focused(window);
         if target && self.active_draft.as_ref().is_none_or(|a| a.segment.locked) {
             return None;
         }

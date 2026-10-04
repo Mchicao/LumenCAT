@@ -4,7 +4,7 @@ description: "Trigger: verificar LumenCAT, E2E, GPUI o legacy. Conduce la app de
 license: Apache-2.0
 metadata:
   author: "Mchicao"
-  version: "1.0"
+  version: "1.1"
 ---
 
 ## Activation Contract
@@ -14,7 +14,8 @@ Activa esta skill para verificar comportamiento implementado de LumenCAT, reprod
 ## Hard Rules
 
 - Usa únicamente proyectos nuevos en `output/verification/<RunId>`. Nunca conduzcas una instancia del usuario ni escribas SQLite para simular una acción GUI.
-- La app es un recurso en cola: el controlador mantiene `output/verification/.app-lock.json`. Lanza y conduce con `-WaitSeconds 900`; si otro RunId sostiene la cola, espera o ejecuta su cleanup. Nunca lances el EXE por tu cuenta fuera del controlador.
+- La app es un recurso en cola: el controlador mantiene `output/verification/.app-lock.json`. Lanza y conduce con `-WaitSeconds 900`; si otro RunId sostiene la cola, espera a que su propietario la libere. Nunca lances el EXE por tu cuenta fuera del controlador.
+- La cola es local a cada checkout: coordina también con otros worktrees antes de lanzar. Espera a su cierre; nunca ejecutes cleanup de una instancia ajena.
 - Usa `cua-driver` en background. Obtén captura antes y después de cada acción. Deriva coordenadas de la captura actual, no de recetas antiguas.
 - No escales a foreground sin autorización. `unverifiable` exige leer la captura; `background_unavailable` bloquea esa acción, no acredita un bug de la app.
 - Conserva evidencia tras cleanup. No declares E2E GUI por tests Rust, seeds, lectura estática o una captura final sin acciones.
@@ -42,6 +43,8 @@ Ejecuta `pwsh -NoProfile -File scripts/utils/control_lumencat.ps1 -Action doctor
 
 Lee [el mapa](features/README.md) y la receta. Usa `-Action snapshot`, después `-Action click -X <x> -Y <y>` o `-Action type -X <x> -Y <y> -Text '<texto>'`, siempre con `-RunId e2e-001 -WaitSeconds 900`. El controlador guarda antes/acción/después y refresca el latido de la cola. En diálogos usa HWND del mismo PID y `-Label 'Nombre:' -Role Edit`. Para teclado: `-Action key -Keys Enter`; no asumas entrega de hotkeys.
 
+`type` inserta en el caret; no reemplaza contenido existente. Para sustituir un campo completo (idiomas, consulta, destino o formulario), ejecuta `pwsh -NoProfile -File .cursor/skills/verify-lumencat/scripts/set-field.ps1 -RunId e2e-001 -Label 'Idioma de origen' -Value fr -WaitSeconds 900`. El helper usa doctor y snapshots del controlador, UIA SetValue y lectura exacta posterior; admite `-WindowId` para diálogos del mismo PID. No acredita teclado físico ni clipboard. Tras una acción fallida repite doctor; si la UI sigue atascada, restablece un estado conocido o cierra y reabre la instancia propia.
+
 El editor GPUI es una cuadrícula Trados: cada fila es `# | origen | destino | barra de estado`. La fila activa contiene el editor de destino dentro del grid (`target-editor`, etiqueta UIA «Destino») y su origen lee «Origen del segmento activo» (`active-source`). Las filas inactivas exponen celdas «Origen»/«Destino»/«Estado» de solo lectura. La barra de estado lateral: rojo sin destino, ámbar borrador, verde confirmado, gris bloqueado.
 
 ### Evidence
@@ -58,6 +61,8 @@ Ejecuta `pwsh -NoProfile -File scripts/utils/control_lumencat.ps1 -Action cleanu
 
 El controlador anterior es el helper ejecutable. [Verificación](references/coverage.md) lista checks de núcleo y corpus especializados. Comprobación de campos UIA: `scripts/utils/verify_gpui_uia.ps1 -ProcessId <pid> -WindowId <hwnd> -OutputDirectory <dir>` (en proyectos con segmento activo).
 
+[`scripts/set-field.ps1`](scripts/set-field.ps1) reemplaza un Edit completo sin tomar foreground y falla si el valor leído no coincide. Su JSON informa las capturas y la respuesta del driver; conserva ambos junto a los resultados del RunId.
+
 ## Output Contract
 
 Devuelve subfunciones verificadas, fallidas, no ejecutadas y bloqueadas, con rutas de evidencia. Una guía escrita no equivale a ejecución aprobada.
@@ -66,4 +71,5 @@ Devuelve subfunciones verificadas, fallidas, no ejecutadas y bloqueadas, con rut
 
 - [Mapa completo de funciones](features/README.md).
 - [Cobertura y niveles de evidencia](references/coverage.md).
+- [Criterios Trados y comparación del corte auditado](references/trados-essential-ux.md).
 - [Guía de uso](../../../docs/guides/INICIO.md).

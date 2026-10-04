@@ -12,7 +12,7 @@
 
 ## How to get to it (user POV)
 
-Abre un proyecto e importa un documento con **Importar documento**. El editor es una cuadrícula estilo Trados: cada fila es `# | Origen | Destino | Estado` (DataGrid «Segmentos bilingües»). La fila activa muestra el origen leído «Origen del segmento activo» (`active-source`) y el editor de destino inline (`target-editor`) dentro del propio grid; las filas inactivas exponen celdas de solo lectura «Origen»/«Destino»/«Estado». La barra lateral de estado colorea la fila: rojo sin destino, ámbar borrador, verde confirmado, gris bloqueado; la celda «Estado» combina `confirmed|draft|locked` con `editable`.
+Abre un proyecto e importa un documento con **Importar documento**. El grid «Segmentos bilingües» contiene `# | Origen | Destino | Estado`. Solo la fila activa muestra «Origen del segmento activo» y el editor inline «Destino»; las inactivas exponen celdas de solo lectura. Estado UIA: `confirmado|borrador; editable|bloqueado`; barra lateral roja sin destino, ámbar borrador, verde confirmado y gris bloqueado.
 
 Sobre el grid está la toolbar **Acciones del segmento**: Anterior, Siguiente, Copiar origen, Bloquear, Insertar siguiente etiqueta protegida, Confirmar y avanzar. En la toolbar de proyecto están Deshacer y Rehacer. La barra inferior informa «Guardado» cuando todo está persistido; tras editar muestra el guardado en curso y vuelve a «Guardado». Ctrl+S fuerza el guardado; un error conserva el texto en el editor.
 
@@ -28,8 +28,8 @@ Los atajos con modificador (Ctrl+↑/↓, Ctrl+Insert, Ctrl+Alt+Enter, Ctrl+L, C
 
 - `-Label 'Destino' -Role Edit` solo coincide con el editor inline de la fila activa; las celdas «Destino» inactivas son DataItem, no Edit. `-Label 'Origen'` sí es ambiguo (una celda por fila inactiva).
 - Los snapshots before/after de una acción `-Label` quedan FILTRADOS a ese elemento: para acreditar el efecto completo usa `-Action snapshot` sin etiqueta entre pasos.
-- Cada hotkey con modificador que el transporte no entrega degrada a una `c` literal escrita en el campo enfocado (sucia el borrador): deshaz con el botón tras cada intento y registra el atajo como BLOCKED, no como bug de la app.
-- La celda «Estado» mezcla idiomas (`confirmed; editable` vs `draft; bloqueado`): verifica el bloqueo por el sufijo y el badge «Locked»/«Desbloquear» de la toolbar, reportado como hallazgo cosmético.
+- Un combo degradado puede insertar una letra literal en el campo enfocado: comprueba el texto, repite doctor y restaura el estado si cambió. Registra el atajo BLOCKED, sin convertir una entrega fallida en negativo aprobado de la app.
+- En el corte auditado la celda UIA «Estado» usa `confirmado|borrador; editable|bloqueado`; los badges visuales siguen en inglés. Verifica el sufijo y «Desbloquear», no el texto de un badge como único indicador.
 - Al bloquear, el botón «Bloquear» desaparece y aparece «Desbloquear»; Copiar origen, Etiqueta y Confirmar y avanzar se deshabilitan. El Edit «Destino» sigue expuesto en UIA pero rechaza escritura.
 - La confirmación requiere destino no vacío y segmento desbloqueado; vacío/bloqueado muestra aviso y no confirma. Ctrl+Enter no equivale a guardar borrador.
 - Confirmar aprende texto plano solo si hay memoria de escritura compatible; DOCX con códigos valida pero no aprende esos códigos como TMX textual.

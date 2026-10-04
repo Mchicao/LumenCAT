@@ -1,6 +1,6 @@
 ## Sub-features
 
-- `input.target`: escribir/borrar en el editor de destino inline (`target-editor`, Edit «Destino» de la fila activa) mediante teclado real.
+- `input.target`: escribir/borrar en el editor inline (`target-editor`, Edit «Destino»); registrar la ruta utilizada, separando UIA, teclado sintético y teclado físico.
 - `input.clipboard-unicode`: introducir texto con teclado/portapapeles conservando caracteres Unicode (diacríticos, CJK, tokens) en el destino.
 - `input.focus-shortcuts`: dirigir teclas (←/→, Inicio/Fin, Backspace/Supr, Enter) al campo enfocado sin que los atajos globales las intercepten.
 - `input.search-replace`: escribir consulta y reemplazo (recorrido completo en [search](search.md)).
@@ -16,7 +16,7 @@ Para Unicode real, escribe (o pega) una cadena con diacríticos, CJK y símbolos
 
 ## Driving it with cua-driver
 
-Con el `RunId` del controlador: `-Action type -Label 'Destino' -Role Edit -Text '<texto>'` escribe en el editor inline por la ruta UIA; `-Action type -X <x> -Y <y>` sobre el cuadro del destino ejercita la ruta de teclado real (synthetic_events) — acredita `input.target` con entrada física sintética. `-Action key -Keys backspace` o `-Keys home` ejercitan el foco. Captura snapshot antes/después y verifica el `value` del Edit UIA, no la posición gráfica del cursor. Para Unicode, escribe la cadena y compara dentro del mismo PowerShell que leyó el JSON fijando `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8` antes de invocar al controlador/driver: con el codepage OEM heredado los JSON de evidencia salen con doble codificación y la comparación falla aunque la app esté correcta. El pegado Ctrl+V y los atajos con modificador se intentan con `-Action hotkey`; si el transporte degrada el combo (aparece una `c` literal), marca ese camino BLOCKED, deshaz con el botón y acredita el campo con escritura directa.
+Con el `RunId` del controlador, `-Action type -Label 'Destino' -Role Edit -Text '<texto>'` intenta la ruta accesible; `-Action type -X <x> -Y <y>` intenta entrada sintética. Lee la ruta devuelta: ninguna acredita teclado físico. `-Action key -Keys backspace` o `-Keys home` ejercitan el foco si se entregan. Verifica valor y captura posterior, no solo la respuesta del driver. Fija UTF-8 en `[Console]::OutputEncoding` y `$OutputEncoding` antes de llamadas directas y compara Unicode dentro del mismo PowerShell. Ctrl+V y modificadores se intentan con `-Action hotkey`; rechazo/degradación se registra BLOCKED, se repite doctor y se restaura un estado conocido. SetValue mediante `scripts/set-field.ps1` sustituye un campo completo sin acreditar clipboard ni teclado.
 
 ## Gotchas
 
@@ -27,3 +27,4 @@ Con el `RunId` del controlador: `-Action type -Label 'Destino' -Role Edit -Text 
 - La colocación de cursor por clic y la selección parcial con ratón no están implementadas (`character_index_for_point` devuelve `None`); no las declares probadas.
 - Ctrl+A + escritura sustituye el contenido; Ctrl+C/V es clipboard del sistema — no introduzcas contenido sensible.
 - `components::InputModel` no tenía prueba E2E previa; `editing::tests` cubre conversión de offsets, no conducción GPUI.
+- En `audit-main-gpui-20261004` (`524046f`) el teclado sintético convirtió 😀 en U+F600; SetValue conservó exactamente `café😀`. Registra la ruta sintética BLOCKED y no concluyas fallo de Unicode de la app sin otra ruta independiente. SetValue acredita el campo, no teclado físico ni clipboard.

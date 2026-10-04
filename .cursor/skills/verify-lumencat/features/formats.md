@@ -3,7 +3,7 @@
 - `formats.import-txt`: importar TXT UTF-8; cada línea es un segmento y se conservan terminadores y BOM.
 - `formats.import-xliff`: importar XLIFF 1.2 textual (sin códigos inline ni `seg-source`), preservando el envelope.
 - `formats.import-docx`: importar DOCX con códigos protegidos `<g id="k">`/`<x id="k"/>` en fronteras de estilo, tablas e imágenes.
-- `formats.language-conflict`: rechazar XLIFF cuyo `source-language`/`target-language` contradice el par elegido. NO implementado en la build actual del checkout principal (existe en `origin/main` 51bd864); hoy un XLIFF se importa con el par del proyecto sin validar el declarado.
+- `formats.language-conflict`: rechazar XLIFF cuyo `source-language`/`target-language` declarado contradice el par elegido, sin crear documento ni relabelar el envelope.
 - `formats.import-reject`: rechazar formatos no soportados y XML inválido con mensaje explícito, sin crear documento.
 - `formats.export-document`: exportar el documento activo a un archivo NUEVO (TXT/XLIFF/DOCX), nunca sobre el original ni un destino existente.
 - `formats.export-missing-codes`: negativo DOCX — la exportación/confirmación exige todos los códigos del original presentes sin duplicar ni anidar; si faltan, falla con mensaje y no escribe nada.
@@ -30,12 +30,12 @@ Corpus extra para negativos: créalo TÚ dentro de la carpeta del RunId tras el 
 ## Gotchas
 
 - Límites: documento general 256 MiB, DOCX 128 MiB y parte 32 MiB, texto de segmento 4 MiB al importar y 1 MiB persistido; superarlos da error explícito, no truncado.
-- XLIFF: solo versión `1.2` con namespace OASIS correcto; DTD/entidades externas rechazadas; códigos inline en `source/target` y `seg-source` rechazados («no soportados todavía»); `trans-unit` sin `id`/`source` o con `id` duplicado por `file` se rechazan.
-- El par usado al importar es el del proyecto (campos de idioma no implementados aún); los documentos ya guardados conservan su par sin relabelar.
+- XLIFF: versión `1.2`, namespace OASIS o sin namespace como el corpus de launch; namespace declarado incorrecto se rechaza. DTD/entidades externas, códigos inline y `seg-source` rechazados; `trans-unit` sin `id`/`source` o con `id` duplicado por `file` se rechazan.
+- El par de próximas importaciones se guarda desde el lateral; los documentos existentes conservan el suyo. Negativo probado: proyecto en→fr + `sample.xlf` en→es produce «Conflicto de idioma XLIFF» y no añade documento. XLIFF sin atributos de idioma usa el par elegido.
 - TXT: un destino con `\r\n` añadido falla la exportación («target TXT no puede agregar líneas estructurales»); BOM y finales mixtos CRLF/LF se preservan.
 - DOCX: sin un código del original en el destino la reconstrucción falla («código…»), sin duplicar ni anidar `<g>`; estructuras no soportadas (campos, tracked changes, `w:tab/w:br`, headers/footers, SmartArt) se rechazan con mensaje al importar, no se silencian.
 - Exportación atómica: temporal + `persist_noclobber`; cancelar a mitad deja sin destino; la exportación XLIFF revalida el archivo reparseándolo. Nunca sobrescribe original ni destino existente.
 - El diálogo Guardar de exportación NO avisa de sobrescritura por sí solo: al elegir un archivo existente, el SO muestra «Confirmar Guardar como»; tras aceptar, la app rechaza con «destino ya existe; elija un archivo nuevo» y no escribe nada. El botón **Guardar** de ese diálogo tiene rol `Button` (no SplitButton como **Abrir**), y Enter en la confirmación del SO elige «No» (cancel).
-- El campo «Nombre:» del diálogo nativo INSERTA en el caret: reutilizar un diálogo con texto previo duplica la ruta («El nombre de archivo no es válido»). Escíalo y reabre el diálogo para tener el campo vacío.
+- `type` inserta en «Nombre:»; sustituye el campo completo con `scripts/set-field.ps1 -WindowId <HWND> -Label 'Nombre:' -Value '<ruta nueva>'` de la skill y verifica lectura exacta antes de Abrir/Guardar.
 - Con estado sucio, el PRIMER clic en «Exportar documento» autoguarda y no abre el diálogo; pulsa de nuevo. No pulses «Exportar documento» con un diálogo abierto: se apilan diálogos del mismo PID (bug menor registrado en `output/verification/bugs-formats.md`).
-- Pendiente declarado: SDLXLIFF/paquetes, códigos inline XLIFF, TMX con códigos y detección de conflicto de idioma. No hay arrastrar y soltar ni observador de carpeta.
+- Pendiente declarado: SDLXLIFF/paquetes, códigos inline XLIFF y TMX con códigos. No hay arrastrar y soltar ni observador de carpeta. ZIP/XML y negrita DOCX verificados no acreditan apertura en Word ni intercambio con Trados.

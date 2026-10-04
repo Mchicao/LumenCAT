@@ -12,16 +12,30 @@ pub enum ButtonVariant {
 }
 
 pub fn custom_button<F>(
+    id: impl Into<SharedString>,
     label: impl Into<SharedString>,
     variant: ButtonVariant,
     enabled: bool,
     on_click_handler: F,
-) -> Div
+) -> Stateful<Div>
 where
-    F: Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
+    F: Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 {
+    use gpui::prelude::*;
+    let id = id.into();
     let label = label.into();
     let mut btn = div()
+        .id(id.clone())
+        .accessibility_id(id)
+        .role(Role::Button)
+        .aria_label(label.clone())
+        .a11y_synthetic_children(move |tree| {
+            if !enabled {
+                tree.parent_node().set_disabled();
+            }
+        })
+        .when(enabled, |d| d.focusable().tab_stop(true))
+        .focus_visible(|s| s.border_color(Theme::sky()))
         .flex()
         .items_center()
         .justify_center()
@@ -81,26 +95,36 @@ where
         }
     }
 
-    btn.on_mouse_down(MouseButton::Left, on_click_handler)
-        .child(label)
+    btn.on_click(on_click_handler).child(label)
 }
 
 pub fn history_button<F>(redo: bool, enabled: bool, handler: F) -> impl IntoElement
 where
-    F: Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
+    F: Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 {
     use gpui::prelude::*;
     div()
         .id(if redo { "redo" } else { "undo" })
+        .accessibility_id(if redo { "redo" } else { "undo" })
+        .role(Role::Button)
+        .aria_label(if redo { "Rehacer" } else { "Deshacer" })
+        .aria_keyshortcuts(if redo { "Control+Y" } else { "Control+Z" })
+        .a11y_synthetic_children(move |tree| {
+            if !enabled {
+                tree.parent_node().set_disabled();
+            }
+        })
         .size(px(30.))
         .flex()
         .items_center()
         .justify_center()
         .rounded_md()
         .when(enabled, |d| {
-            d.cursor_pointer()
+            d.focusable()
+                .tab_stop(true)
+                .cursor_pointer()
                 .hover(|s| s.bg(Theme::bg_hover()))
-                .on_mouse_down(MouseButton::Left, handler)
+                .on_click(handler)
         })
         .tooltip(move |_, cx| cx.new(move |_| HistoryTooltip(redo)).into())
         .child(
@@ -428,11 +452,14 @@ pub fn inline_text(text: &str) -> Div {
     )
 }
 
-pub fn input_field(input: &InputModel, entity: Entity<super::LumenCatApp>) -> impl IntoElement {
+pub fn input_field(
+    field: super::input::InputField,
+    input: &InputModel,
+    entity: Entity<super::LumenCatApp>,
+) -> impl IntoElement {
     use gpui::prelude::*;
     let focus = input.focus_handle.clone();
-    div()
-        .id(SharedString::from(input.placeholder.clone()))
+    super::input::accessible_input(field, input, entity.clone(), true)
         .relative()
         .child(super::input::native_input(
             input.focus_handle.clone(),
@@ -451,7 +478,9 @@ pub fn input_field(input: &InputModel, entity: Entity<super::LumenCatApp>) -> im
         .border_color(Theme::border_subtle())
         .focus(|d| d.border_color(Theme::sky()))
         .text_xs()
-        .on_mouse_down(MouseButton::Left, move |_, window, _| focus.focus(window))
+        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+            focus.focus(window, cx)
+        })
         .child(if input.text.is_empty() {
             input.placeholder.clone()
         } else {

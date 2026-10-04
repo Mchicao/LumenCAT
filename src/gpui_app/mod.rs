@@ -57,7 +57,6 @@ impl DraftState {
     }
 }
 
-#[allow(dead_code)]
 enum PendingOp {
     Open,
     Operation,
@@ -69,7 +68,6 @@ enum PendingOp {
     History,
     Close,
     Qa(u64, u64),
-    Reload(u64),
 }
 
 enum PendingNav {
@@ -112,7 +110,8 @@ pub struct LumenCatApp {
     pub replacement_input: InputModel,
     show_replace: bool,
     document_scope: bool,
-    grid_scroll: ScrollHandle,
+    grid_list: ListState,
+    pending_reveal: Option<usize>,
     progress: (usize, usize),
     applied_tm: HashMap<i64, f64>,
     pub search_results: Vec<Segment>,
@@ -121,10 +120,12 @@ pub struct LumenCatApp {
     // Status
     pub message: String,
     pub save_error: bool,
+    message_error: bool,
     pub closing_requested: bool,
     cancellations: HashMap<u64, Cancellation>,
     pub focus_handle: FocusHandle,
     show_memory_actions: bool,
+    native_dialog_open: bool,
 }
 
 impl Focusable for LumenCatApp {
@@ -160,7 +161,8 @@ impl LumenCatApp {
             replacement_input: InputModel::new("Reemplazar por...", cx),
             show_replace: false,
             document_scope: true,
-            grid_scroll: ScrollHandle::new(),
+            grid_list: ListState::new(0, ListAlignment::Top, px(600.)),
+            pending_reveal: None,
             progress: (0, 0),
             applied_tm: HashMap::new(),
             search_results: Vec::new(),
@@ -168,10 +170,12 @@ impl LumenCatApp {
             message: "Open or create a local project to get started · 100% Offline & Private"
                 .into(),
             save_error: false,
+            message_error: false,
             closing_requested: false,
             cancellations: HashMap::new(),
             focus_handle: cx.focus_handle(),
             show_memory_actions: false,
+            native_dialog_open: false,
         };
 
         if !app.project_path.trim().is_empty() {
@@ -189,10 +193,20 @@ impl LumenCatApp {
             task,
         }) {
             Ok(()) => {
+                if matches!(
+                    pending,
+                    PendingOp::Operation
+                        | PendingOp::History
+                        | PendingOp::Search(_)
+                        | PendingOp::Open
+                ) {
+                    self.message_error = false;
+                }
                 self.pending.insert(self.next_id, pending);
                 true
             }
             Err(_) => {
+                self.message_error = true;
                 self.message = "Background worker busy. Text preserved in editor.".into();
                 false
             }
@@ -214,7 +228,6 @@ impl LumenCatApp {
                     | PendingOp::History
                     | PendingOp::Close
                     | PendingOp::Select(_)
-                    | PendingOp::Reload(_)
                     | PendingOp::Search(_)
             )
         })
@@ -228,6 +241,34 @@ impl LumenCatApp {
         self.search_results.clear();
         self.is_searching = false;
         self.selection_generation += 1;
+        self.grid_list.reset(0);
+    }
+
+    fn remeasure_rows(&mut self, ordinals: Vec<usize>) {
+        if self.is_searching || ordinals.is_empty() {
+            return;
+        }
+        let min = ordinals.iter().min().copied().unwrap_or(0);
+        let max = ordinals.iter().max().copied().unwrap_or(0);
+        self.grid_list.remeasure_items(min..max + 1);
+    }
+
+    fn activate_document(&mut self, id: i64) {
+        let Some(doc) = self.documents.iter().find(|d| d.id == id).cloned() else {
+            return;
+        };
+        self.current_document_id = Some(id);
+        self.source_lang = doc.source_lang;
+        self.target_lang = doc.target_lang;
+        self.active_draft = None;
+        self.target_input.set_text("");
+        self.matches.clear();
+        self.qa_issues.clear();
+        self.invalidate();
+        self.refresh_progress();
+        if doc.segment_count > 0 {
+            self.navigate_to(PendingNav::Ordinal(id, 0));
+        }
     }
 
     fn cancel_lookups(&self) {
@@ -437,6 +478,7 @@ impl LumenCatApp {
                 self.target_input.insert(tag);
                 self.on_target_text_changed(Origin::Human);
             } else {
+                self.message_error = false;
                 self.message = "Todas las etiquetas ya están insertadas".into();
             }
         }
@@ -542,29 +584,33 @@ impl LumenCatApp {
     }
 
     pub fn open_project_dialog(&mut self) {
-        if self.is_dirty() || self.is_busy() {
+        if self.native_dialog_open || self.is_dirty() || self.is_busy() {
             return;
         }
-        if let Some(path) = rfd::FileDialog::new()
+        self.native_dialog_open = true;
+        let path = rfd::FileDialog::new()
             .add_filter("LumenCAT Project", &["lcat", "db", "sqlite"])
-            .save_file()
-        {
+            .save_file();
+        self.native_dialog_open = false;
+        if let Some(path) = path {
             self.project_path = path.to_string_lossy().to_string();
             self.send(WorkerTask::Open(path), PendingOp::Open);
         }
     }
 
     pub fn import_document_dialog(&mut self) {
-        if !self.opened || self.is_busy() {
+        if self.native_dialog_open || !self.opened || self.is_busy() {
             return;
         }
-        if let Some(path) = rfd::FileDialog::new()
+        self.native_dialog_open = true;
+        let path = rfd::FileDialog::new()
             .add_filter("Supported Documents", &["docx", "xlf", "xliff", "txt"])
             .add_filter("Word Documents", &["docx"])
             .add_filter("XLIFF", &["xlf", "xliff"])
             .add_filter("Plain Text", &["txt"])
-            .pick_file()
-        {
+            .pick_file();
+        self.native_dialog_open = false;
+        if let Some(path) = path {
             let (sl, tl) = self.document_languages();
             let cancel = Cancellation::default();
             if self.send(
@@ -578,13 +624,15 @@ impl LumenCatApp {
     }
 
     pub fn import_tmx_dialog(&mut self) {
-        if !self.opened || self.is_busy() {
+        if self.native_dialog_open || !self.opened || self.is_busy() {
             return;
         }
-        if let Some(path) = rfd::FileDialog::new()
+        self.native_dialog_open = true;
+        let path = rfd::FileDialog::new()
             .add_filter("TMX Translation Memory", &["tmx"])
-            .pick_file()
-        {
+            .pick_file();
+        self.native_dialog_open = false;
+        if let Some(path) = path {
             let (sl, tl) = self.document_languages();
             let cancel = Cancellation::default();
             if self.send(
@@ -598,6 +646,9 @@ impl LumenCatApp {
     }
 
     pub fn export_document_dialog(&mut self) {
+        if self.native_dialog_open {
+            return;
+        }
         if self.is_dirty() || self.is_busy() {
             self.save(true);
             return;
@@ -605,10 +656,12 @@ impl LumenCatApp {
         let Some(doc_id) = self.current_document_id else {
             return;
         };
-        if let Some(path) = rfd::FileDialog::new()
+        self.native_dialog_open = true;
+        let path = rfd::FileDialog::new()
             .add_filter("Translated Document", &["docx", "xlf", "xliff", "txt"])
-            .save_file()
-        {
+            .save_file();
+        self.native_dialog_open = false;
+        if let Some(path) = path {
             let cancel = Cancellation::default();
             if self.send(
                 WorkerTask::Export(doc_id, path, cancel.clone()),
@@ -621,13 +674,15 @@ impl LumenCatApp {
     }
 
     pub fn export_tmx_dialog(&mut self) {
-        if !self.opened || self.is_busy() {
+        if self.native_dialog_open || !self.opened || self.is_busy() {
             return;
         }
-        if let Some(path) = rfd::FileDialog::new()
+        self.native_dialog_open = true;
+        let path = rfd::FileDialog::new()
             .add_filter("TMX Translation Memory", &["tmx"])
-            .save_file()
-        {
+            .save_file();
+        self.native_dialog_open = false;
+        if let Some(path) = path {
             let cancel = Cancellation::default();
             if self.send(
                 WorkerTask::ExportTm(path, cancel.clone()),
@@ -667,16 +722,18 @@ impl LumenCatApp {
 
         match reply.result {
             Err(error) => {
+                self.message_error = true;
                 if matches!(pending, PendingOp::Save(_)) {
                     self.save_error = true;
                     if let Some(a) = &mut self.active_draft {
                         a.saving = false;
                     }
                 }
-                self.message = format!("{error}. Unsaved text remains in the editor.");
+                self.message = error.to_string();
             }
             Ok(data) => match data {
                 WorkerData::Opened(recovered, docs) => {
+                    self.message_error = false;
                     self.opened = true;
                     self.save_error = false;
                     self.active_draft = None;
@@ -687,11 +744,7 @@ impl LumenCatApp {
                     self.invalidate();
                     self.documents = docs;
                     if let Some(first_doc) = self.documents.first().cloned() {
-                        self.current_document_id = Some(first_doc.id);
-                        self.source_lang = first_doc.source_lang;
-                        self.target_lang = first_doc.target_lang;
-                        self.invalidate();
-                        self.navigate_to(PendingNav::Ordinal(first_doc.id, 0));
+                        self.activate_document(first_doc.id);
                     }
                     self.message = if recovered {
                         "Clean recovery from previous session. SQLite verified database safely."
@@ -701,31 +754,32 @@ impl LumenCatApp {
                     .into();
                 }
                 WorkerData::Documents(docs) => {
+                    self.message_error = false;
                     self.documents = docs;
                     if self.current_document_id.is_none()
                         && let Some(first_doc) = self.documents.first().cloned()
                     {
-                        self.current_document_id = Some(first_doc.id);
-                        self.source_lang = first_doc.source_lang;
-                        self.target_lang = first_doc.target_lang;
-                        self.invalidate();
-                        self.navigate_to(PendingNav::Ordinal(first_doc.id, 0));
+                        self.activate_document(first_doc.id);
                     }
                     self.message = "Documents updated successfully".into();
                 }
                 WorkerData::Page(rows) => {
                     if matches!(pending, PendingOp::Search(g) if g == self.generation) {
+                        self.message_error = false;
                         self.message = format!("{} segmentos encontrados", rows.len());
                         self.search_results = rows;
+                        self.grid_list.reset(0);
                     } else if matches!(pending, PendingOp::Page(g, _) if g == self.generation) {
+                        let mut changed = Vec::new();
                         for row in rows {
+                            changed.push(row.ordinal);
                             self.rows.insert(row.ordinal, row);
                         }
+                        self.remeasure_rows(changed);
                     }
                 }
                 WorkerData::Selected(segment) => {
-                    if matches!(pending, PendingOp::Select(g) | PendingOp::Reload(g) if g == self.selection_generation)
-                    {
+                    if matches!(pending, PendingOp::Select(g) if g == self.selection_generation) {
                         let source = segment.source.clone();
                         self.target_input.set_text(segment.target.clone());
                         let index = if self.is_searching {
@@ -736,8 +790,19 @@ impl LumenCatApp {
                         } else {
                             segment.ordinal
                         };
-                        self.grid_scroll.scroll_to_item(index);
+                        let previous = self
+                            .active_draft
+                            .as_ref()
+                            .filter(|d| d.segment.document_id == segment.document_id)
+                            .map(|d| d.segment.ordinal);
+                        self.rows.insert(segment.ordinal, segment.clone());
                         self.active_draft = Some(DraftState::new(segment));
+                        let mut changed = vec![index];
+                        if let Some(p) = previous {
+                            changed.push(p);
+                        }
+                        self.remeasure_rows(changed);
+                        self.pending_reveal = Some(index);
                         self.matches.clear();
                         let (sl, tl) = self.document_languages();
                         self.lookup(source, sl, tl, false);
@@ -745,22 +810,33 @@ impl LumenCatApp {
                     }
                 }
                 WorkerData::Saved(segment) => {
-                    if let (PendingOp::Save(serial), Some(active)) =
+                    self.message_error = false;
+                    let saved_ordinal = if let (PendingOp::Save(serial), Some(active)) =
                         (pending, &mut self.active_draft)
                         && segment.id == active.segment.id
                     {
                         active.acknowledge(&segment, serial);
                         self.rows.insert(segment.ordinal, segment);
                         self.message = "All changes saved safely to SQLite disk".into();
+                        Some(active.segment.ordinal)
+                    } else {
+                        None
+                    };
+                    if let Some(ordinal) = saved_ordinal {
+                        self.remeasure_rows(vec![ordinal]);
                     }
                     self.request_qa();
                 }
                 WorkerData::History(segment) => {
+                    self.message_error = false;
                     self.invalidate();
                     if let Some(segment) = segment {
                         self.current_document_id = Some(segment.document_id);
                         self.target_input.set_text(segment.target.clone());
+                        self.rows.insert(segment.ordinal, segment.clone());
                         self.active_draft = Some(DraftState::new(segment));
+                        self.pending_reveal =
+                            Some(self.active_draft.as_ref().map_or(0, |a| a.segment.ordinal));
                         if let Some(a) = &self.active_draft {
                             let source = a.segment.source.clone();
                             let (sl, tl) = self.document_languages();
@@ -783,6 +859,7 @@ impl LumenCatApp {
                     }
                 }
                 WorkerData::Done(msg) => {
+                    self.message_error = false;
                     if matches!(pending, PendingOp::Operation) {
                         let selected = self.active_draft.as_ref().map(|a| a.segment.id);
                         self.invalidate();
@@ -826,6 +903,10 @@ impl Render for LumenCatApp {
         let entity = cx.entity().clone();
 
         div()
+            .id("lumencat")
+            .accessibility_id("lumencat")
+            .role(Role::Application)
+            .aria_label("LumenCAT")
             .track_focus(&self.focus_handle(cx))
             .size_full()
             .bg(Theme::bg_app())
@@ -837,17 +918,24 @@ impl Render for LumenCatApp {
                 let ks = &event.keystroke;
                 let search = this.search_input.focus_handle.is_focused(window);
                 let replacement = this.replacement_input.focus_handle.is_focused(window);
-                if ks.modifiers.control && matches!(ks.key.as_str(), "f" | "h") {
+                if ks.key == "tab" {
+                    if ks.modifiers.shift {
+                        window.focus_prev(cx);
+                    } else {
+                        window.focus_next(cx);
+                    }
+                } else if ks.modifiers.control && matches!(ks.key.as_str(), "f" | "h") {
                     this.show_replace = ks.key == "h";
-                    this.search_input.focus_handle.focus(window);
+                    this.search_input.focus_handle.focus(window, cx);
                 } else if ks.key == "escape" {
                     this.is_searching = false;
                     this.search_results.clear();
                     if let Some(active) = &this.active_draft {
-                        this.grid_scroll.scroll_to_item(active.segment.ordinal);
+                        this.pending_reveal = Some(active.segment.ordinal);
+                        cx.notify();
                     }
                     this.show_replace = false;
-                    this.target_input.focus_handle.focus(window);
+                    this.target_input.focus_handle.focus(window, cx);
                 } else if ks.modifiers.control && ks.key == "s" {
                     this.save(true);
                 } else if ks.modifiers.shift && ks.key == "f12" {
@@ -906,10 +994,11 @@ impl Render for LumenCatApp {
                     this.move_segment(-1);
                 } else if ks.modifiers.alt && ks.key == "c" {
                     this.copy_source_to_target();
-                } else if this
-                    .active_draft
-                    .as_ref()
-                    .is_some_and(|a| !a.segment.locked)
+                } else if this.target_input.focus_handle.is_focused(window)
+                    && this
+                        .active_draft
+                        .as_ref()
+                        .is_some_and(|a| !a.segment.locked)
                 {
                     let before = this.target_input.text.clone();
                     this.target_input.handle_key(event, cx);
@@ -942,6 +1031,9 @@ impl LumenCatApp {
         let doc_selected = self.current_document_id.is_some();
 
         div()
+            .id("header")
+            .role(Role::Toolbar)
+            .aria_label("Proyecto y documentos")
             .h(px(52.))
             .w_full()
             .bg(Theme::bg_surface())
@@ -1003,6 +1095,13 @@ impl LumenCatApp {
                             .gap_2()
                             .child(
                                 div()
+                                    .id("project-name")
+                                    .role(Role::Label)
+                                    .aria_label(if self.opened {
+                                        self.project_path.clone()
+                                    } else {
+                                        "Sin proyecto".into()
+                                    })
                                     .px_2()
                                     .py_1()
                                     .rounded_md()
@@ -1025,13 +1124,14 @@ impl LumenCatApp {
                                     }),
                             )
                             .child(custom_button(
+                                "project-open",
                                 if self.opened {
                                     "Switch Project"
                                 } else {
                                     "Open / Create Project"
                                 },
                                 ButtonVariant::Secondary,
-                                !self.is_busy(),
+                                !self.is_busy() && !self.is_dirty(),
                                 {
                                     let entity = entity.clone();
                                     move |_event, _window, cx| {
@@ -1049,6 +1149,7 @@ impl LumenCatApp {
                     .items_center()
                     .gap_2()
                     .child(custom_button(
+                        "document-import",
                         "Importar documento",
                         ButtonVariant::Secondary,
                         is_ready,
@@ -1063,6 +1164,7 @@ impl LumenCatApp {
                     ))
                     .when(self.show_memory_actions, |bar| {
                         bar.child(custom_button(
+                            "tm-import",
                             "Importar TMX",
                             ButtonVariant::Secondary,
                             is_ready,
@@ -1077,6 +1179,7 @@ impl LumenCatApp {
                         ))
                     })
                     .child(custom_button(
+                        "document-export",
                         "Exportar documento",
                         ButtonVariant::Secondary,
                         is_ready && doc_selected,
@@ -1091,6 +1194,7 @@ impl LumenCatApp {
                     ))
                     .when(self.show_memory_actions, |bar| {
                         bar.child(custom_button(
+                            "tm-export",
                             "Exportar TMX",
                             ButtonVariant::Secondary,
                             is_ready,
@@ -1104,15 +1208,36 @@ impl LumenCatApp {
                             },
                         ))
                     })
-                    .child(custom_button("Memoria ▾", ButtonVariant::Ghost, true, {
-                        let entity = entity.clone();
-                        move |_, _, cx| {
-                            entity.update(cx, |this, cx| {
-                                this.show_memory_actions = !this.show_memory_actions;
-                                cx.notify();
-                            });
-                        }
-                    }))
+                    .child(
+                        custom_button("memory-menu", "Memoria ▾", ButtonVariant::Ghost, true, {
+                            let entity = entity.clone();
+                            move |_, _, cx| {
+                                entity.update(cx, |this, cx| {
+                                    this.show_memory_actions = !this.show_memory_actions;
+                                    cx.notify();
+                                });
+                            }
+                        })
+                        .aria_expanded(self.show_memory_actions)
+                        .on_a11y_action(AccessibleAction::Expand, {
+                            let entity = entity.clone();
+                            move |_, _, cx| {
+                                entity.update(cx, |this, cx| {
+                                    this.show_memory_actions = true;
+                                    cx.notify();
+                                });
+                            }
+                        })
+                        .on_a11y_action(AccessibleAction::Collapse, {
+                            let entity = entity.clone();
+                            move |_, _, cx| {
+                                entity.update(cx, |this, cx| {
+                                    this.show_memory_actions = false;
+                                    cx.notify();
+                                });
+                            }
+                        }),
+                    )
                     .child(div().h(px(20.)).w(px(1.)).bg(Theme::border_subtle()))
                     .child(history_button(false, !self.is_busy(), {
                         let entity = entity.clone();
@@ -1177,6 +1302,9 @@ impl LumenCatApp {
             .child(
                 div()
                     .id("sidebar_docs")
+                    .accessibility_id("documents")
+                    .role(Role::List)
+                    .aria_label(format!("Documentos ({})", docs.len()))
                     .flex_1()
                     .overflow_y_scroll()
                     .p_2()
@@ -1186,6 +1314,9 @@ impl LumenCatApp {
                     .children(if docs.is_empty() {
                         vec![
                             div()
+                                .id("documents-empty")
+                                .role(Role::Label)
+                                .aria_label("Sin documentos. Importa DOCX, XLIFF o TXT.")
                                 .p_4()
                                 .flex()
                                 .flex_col()
@@ -1215,9 +1346,17 @@ impl LumenCatApp {
                                     .unwrap_or_else(|| "doc".into());
 
                                 let entity_cb = entity.clone();
-                                let click_sl = doc_sl.clone();
-                                let click_tl = doc_tl.clone();
                                 div()
+                                    .id(("document", doc_id as u64))
+                                    .accessibility_id(format!("document-{doc_id}"))
+                                    .role(Role::ListItem)
+                                    .aria_label(doc_name.clone())
+                                    .aria_description(format!(
+                                        "{doc_sl} → {doc_tl}; {seg_count} segmentos"
+                                    ))
+                                    .aria_selected(is_selected)
+                                    .focusable()
+                                    .tab_stop(!is_busy && !is_dirty)
                                     .p_2p5()
                                     .rounded_md()
                                     .cursor_pointer()
@@ -1233,17 +1372,11 @@ impl LumenCatApp {
                                         Theme::border_subtle()
                                     })
                                     .hover(|s| s.bg(Theme::bg_hover()))
-                                    .on_mouse_down(MouseButton::Left, move |_event, _window, cx| {
+                                    .on_click(move |_event, _window, cx| {
                                         if !is_busy && !is_dirty {
-                                            let sl = click_sl.clone();
-                                            let tl = click_tl.clone();
-                                            entity_cb.update(cx, |this, _cx| {
-                                                this.current_document_id = Some(doc_id);
-                                                this.source_lang = sl;
-                                                this.target_lang = tl;
-                                                this.invalidate();
-                                                this.refresh_progress();
-                                                this.navigate_to(PendingNav::Ordinal(doc_id, 0));
+                                            entity_cb.update(cx, |this, cx| {
+                                                this.activate_document(doc_id);
+                                                cx.notify();
                                             });
                                         }
                                     })
@@ -1315,13 +1448,8 @@ impl LumenCatApp {
             .bg(Theme::bg_app())
             .overflow_hidden()
             .child(self.render_search_toolbar(entity.clone()))
-            .child(self.render_bilingual_grid(
-                entity.clone(),
-                doc_count,
-                is_searching,
-                search_count,
-            ))
-            .child(self.render_translation_studio(entity))
+            .child(self.render_editor_toolbar(entity.clone()))
+            .child(self.render_bilingual_grid(entity, doc_count, is_searching, search_count))
     }
 
     fn render_search_toolbar(&self, entity: Entity<Self>) -> impl IntoElement {
@@ -1331,6 +1459,9 @@ impl LumenCatApp {
         let clear = entity.clone();
         let toggle = entity.clone();
         div()
+            .id("search-toolbar")
+            .role(Role::Toolbar)
+            .aria_label("Buscar y reemplazar")
             .w_full()
             .bg(Theme::bg_surface())
             .px_3()
@@ -1343,8 +1474,13 @@ impl LumenCatApp {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .child(input_field(&self.search_input, entity.clone()))
+                    .child(input_field(
+                        input::InputField::Search,
+                        &self.search_input,
+                        entity.clone(),
+                    ))
                     .child(custom_button(
+                        "search-scope",
                         if self.document_scope {
                             "Documento"
                         } else {
@@ -1360,6 +1496,7 @@ impl LumenCatApp {
                         },
                     ))
                     .child(custom_button(
+                        "search-submit",
                         "Buscar",
                         ButtonVariant::Secondary,
                         self.opened,
@@ -1371,18 +1508,35 @@ impl LumenCatApp {
                         },
                     ))
                     .child(custom_button(
+                        "concordance",
+                        "Concordancia",
+                        ButtonVariant::Ghost,
+                        self.opened && !self.search_input.text.trim().is_empty(),
+                        {
+                            let entity = entity.clone();
+                            move |_, _, cx| {
+                                entity.update(cx, |this, cx| {
+                                    this.perform_concordance();
+                                    cx.notify();
+                                });
+                            }
+                        },
+                    ))
+                    .child(custom_button(
+                        "replace-toggle",
                         "Reemplazar",
                         ButtonVariant::Ghost,
                         self.opened,
                         move |_, window, cx| {
                             toggle.update(cx, |this, cx| {
                                 this.show_replace = !this.show_replace;
-                                this.search_input.focus_handle.focus(window);
+                                this.search_input.focus_handle.focus(window, cx);
                                 cx.notify();
                             });
                         },
                     ))
                     .child(custom_button(
+                        "search-clear",
                         "Limpiar",
                         ButtonVariant::Ghost,
                         self.is_searching,
@@ -1390,7 +1544,7 @@ impl LumenCatApp {
                             clear.update(cx, |this, cx| {
                                 this.is_searching = false;
                                 if let Some(active) = &this.active_draft {
-                                    this.grid_scroll.scroll_to_item(active.segment.ordinal);
+                                    this.pending_reveal = Some(active.segment.ordinal);
                                 }
                                 this.search_input.set_text("");
                                 cx.notify();
@@ -1404,8 +1558,13 @@ impl LumenCatApp {
                         .flex()
                         .items_center()
                         .gap_2()
-                        .child(input_field(&self.replacement_input, entity.clone()))
+                        .child(input_field(
+                            input::InputField::Replacement,
+                            &self.replacement_input,
+                            entity.clone(),
+                        ))
                         .child(custom_button(
+                            "replace-apply",
                             "Aplicar al destino",
                             ButtonVariant::Secondary,
                             self.opened && !self.is_dirty() && !self.is_busy(),
@@ -1427,24 +1586,45 @@ impl LumenCatApp {
         is_searching: bool,
         search_count: usize,
     ) -> impl IntoElement {
-        let active_id = self.active_draft.as_ref().map(|d| d.segment.id);
-
         let count = if is_searching {
             search_count
         } else {
             doc_count
         };
 
+        let old_count = self.grid_list.item_count();
+        if old_count != count {
+            self.grid_list.splice(0..old_count, count);
+            self.grid_list.clone().with_uniform_item_height(px(44.));
+        }
+        if let Some(target) = self.pending_reveal.take() {
+            self.grid_list.scroll_to_reveal_item(target);
+        }
+
+        let (source_label, target_label) = {
+            let (sl, tl) = self.document_languages();
+            (
+                format!("SOURCE · {}", sl.to_uppercase()),
+                format!("TARGET · {}", tl.to_uppercase()),
+            )
+        };
+
+        let rows_entity = entity.clone();
+
         div()
-            .h(px(260.))
+            .id("bilingual-grid")
+            .accessibility_id("bilingual-grid")
+            .role(Role::Grid)
+            .aria_label("Segmentos bilingües")
+            .aria_row_count(count)
+            .aria_column_count(4)
+            .flex_1()
+            .min_h(px(0.))
             .w_full()
-            .border_b_1()
-            .border_color(Theme::border_subtle())
             .bg(Theme::bg_card())
             .flex()
             .flex_col()
             .child(
-                // Table Header
                 div()
                     .h(px(28.))
                     .w_full()
@@ -1454,23 +1634,31 @@ impl LumenCatApp {
                     .flex()
                     .items_center()
                     .px_3()
+                    .gap_2()
                     .text_xs()
                     .font_weight(FontWeight::BOLD)
                     .text_color(Theme::text_secondary())
                     .child(div().w(px(50.)).child("#"))
-                    .child(div().flex_1().child("SOURCE SEGMENT"))
-                    .child(div().w(px(110.)).child("ESTADO / TM"))
-                    .child(div().flex_1().child("TARGET TRANSLATION")),
+                    .child(div().flex_1().min_w_0().child(source_label))
+                    .child(div().flex_1().min_w_0().child(target_label))
+                    .child(div().w(px(5.))),
             )
             .child(
                 div()
                     .id("grid_rows")
-                    .track_scroll(&self.grid_scroll)
                     .flex_1()
-                    .overflow_y_scroll()
-                    .children(if count == 0 {
-                        vec![
+                    .min_h(px(0.))
+                    .overflow_hidden()
+                    .when(count == 0, |d| {
+                        d.child(
                             div()
+                                .id("segments-empty")
+                                .role(Role::Label)
+                                .aria_label(if is_searching {
+                                    "Sin resultados"
+                                } else {
+                                    "Sin segmentos traducibles"
+                                })
                                 .p_6()
                                 .text_center()
                                 .text_xs()
@@ -1479,473 +1667,472 @@ impl LumenCatApp {
                                     "No matching segments found."
                                 } else {
                                     "No segments in this document."
+                                }),
+                        )
+                    })
+                    .when(count > 0, |d| {
+                        d.child(
+                            list(self.grid_list.clone(), move |index, _window, cx| {
+                                rows_entity.update(cx, |this, _cx| {
+                                    this.render_grid_item(&rows_entity, index)
                                 })
-                                .into_any_element(),
-                        ]
-                    } else {
-                        (0..count)
-                            .map(|index| {
-                                let (seg_id, ord, state, locked, src_preview, tgt_preview) =
-                                    if is_searching {
-                                        if let Some(row) = self.search_results.get(index) {
-                                            (
-                                                row.id,
-                                                row.ordinal,
-                                                row.state,
-                                                row.locked,
-                                                row.source.clone(),
-                                                row.target.clone(),
-                                            )
-                                        } else {
-                                            (
-                                                0,
-                                                index,
-                                                SegmentState::Draft,
-                                                false,
-                                                "...".into(),
-                                                "...".into(),
-                                            )
-                                        }
-                                    } else {
-                                        if let Some(row) = self.rows.get(&index) {
-                                            (
-                                                row.id,
-                                                row.ordinal,
-                                                row.state,
-                                                row.locked,
-                                                row.source.clone(),
-                                                row.target.clone(),
-                                            )
-                                        } else {
-                                            let page = (index / 128) * 128;
-                                            if !self.requested_pages.contains(&page)
-                                                && let Some(doc_id) = self.current_document_id
-                                                && self.send(
-                                                    WorkerTask::Page(doc_id, page, String::new()),
-                                                    PendingOp::Page(self.generation, page),
-                                                )
-                                            {
-                                                self.requested_pages.push(page);
-                                            }
-                                            (
-                                                0,
-                                                index,
-                                                SegmentState::Draft,
-                                                false,
-                                                "Loading segment...".into(),
-                                                String::new(),
-                                            )
-                                        }
-                                    };
-
-                                let is_active = Some(seg_id) == active_id && seg_id != 0;
-                                let entity_click = entity.clone();
-
-                                div()
-                                    .h(px(36.))
-                                    .flex_shrink_0()
-                                    .w_full()
-                                    .px_3()
-                                    .flex()
-                                    .items_center()
-                                    .border_b_1()
-                                    .border_color(Theme::border_subtle())
-                                    .cursor_pointer()
-                                    .bg(if is_active {
-                                        Theme::bg_selected()
-                                    } else {
-                                        Theme::bg_card()
-                                    })
-                                    .hover(|s| s.bg(Theme::bg_hover()))
-                                    .on_mouse_down(MouseButton::Left, move |_event, _window, cx| {
-                                        if seg_id != 0 {
-                                            entity_click.update(cx, |this, cx| {
-                                                this.target_input.focus_handle.focus(_window);
-                                                this.select_segment(seg_id);
-                                                cx.notify();
-                                            });
-                                        }
-                                    })
-                                    .child(
-                                        div()
-                                            .w(px(50.))
-                                            .text_xs()
-                                            .font_weight(FontWeight::BOLD)
-                                            .text_color(if is_active {
-                                                Theme::sky()
-                                            } else {
-                                                Theme::text_muted()
-                                            })
-                                            .child(format!("{:>4}", ord + 1)),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .min_w_0()
-                                            .text_ellipsis()
-                                            .text_xs()
-                                            .text_color(Theme::text_primary())
-                                            .overflow_hidden()
-                                            .child(if src_preview.len() > 70 {
-                                                format!(
-                                                    "{}…",
-                                                    src_preview
-                                                        .chars()
-                                                        .take(67)
-                                                        .collect::<String>()
-                                                )
-                                            } else {
-                                                src_preview
-                                            }),
-                                    )
-                                    .child(
-                                        div()
-                                            .w(px(110.))
-                                            .flex()
-                                            .items_center()
-                                            .gap_1()
-                                            .child(
-                                                div()
-                                                    .text_xs()
-                                                    .text_color(
-                                                        if state == SegmentState::Confirmed {
-                                                            Theme::emerald()
-                                                        } else {
-                                                            Theme::amber()
-                                                        },
-                                                    )
-                                                    .child(if locked {
-                                                        "🔒"
-                                                    } else if state == SegmentState::Confirmed {
-                                                        "✓"
-                                                    } else {
-                                                        "✎"
-                                                    }),
-                                            )
-                                            .when(self.applied_tm.contains_key(&seg_id), |d| {
-                                                d.child(format!(
-                                                    "TM {:.0}%",
-                                                    self.applied_tm[&seg_id]
-                                                ))
-                                            }),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .min_w_0()
-                                            .text_ellipsis()
-                                            .text_xs()
-                                            .text_color(if tgt_preview.is_empty() {
-                                                Theme::text_muted()
-                                            } else {
-                                                Theme::text_accent()
-                                            })
-                                            .overflow_hidden()
-                                            .child(if tgt_preview.is_empty() {
-                                                "— empty —".into()
-                                            } else if tgt_preview.len() > 70 {
-                                                format!(
-                                                    "{}…",
-                                                    tgt_preview
-                                                        .chars()
-                                                        .take(67)
-                                                        .collect::<String>()
-                                                )
-                                            } else {
-                                                tgt_preview
-                                            }),
-                                    )
-                                    .into_any_element()
                             })
-                            .collect()
+                            .size_full(),
+                        )
                     }),
             )
     }
 
-    fn render_translation_studio(&self, entity: Entity<Self>) -> impl IntoElement {
-        let (has_active, ord, state, locked, origin_str, src_text) =
-            if let Some(active) = &self.active_draft {
-                (
-                    true,
-                    active.segment.ordinal + 1,
-                    active.segment.state,
-                    active.segment.locked,
-                    active.segment.origin.as_str().to_string(),
-                    active.segment.source.clone(),
+    fn render_grid_item(&mut self, entity: &Entity<Self>, index: usize) -> AnyElement {
+        let active_id = self.active_draft.as_ref().map(|d| d.segment.id);
+        if self.is_searching {
+            return if let Some(row) = self.search_results.get(index) {
+                self.render_segment_row(
+                    entity,
+                    index,
+                    row.id,
+                    row.ordinal,
+                    row.state,
+                    row.locked,
+                    &row.source,
+                    &row.target,
+                    false,
                 )
             } else {
-                (
-                    false,
-                    0,
-                    SegmentState::Draft,
-                    false,
-                    "None".into(),
-                    "Select a segment above to begin translating.".into(),
-                )
+                div()
+                    .w_full()
+                    .px_3()
+                    .py_2()
+                    .text_xs()
+                    .text_color(Theme::text_muted())
+                    .child("...")
+                    .into_any_element()
             };
+        }
+        if let Some(row) = self.rows.get(&index) {
+            let is_active = Some(row.id) == active_id && row.id != 0;
+            return self.render_segment_row(
+                entity,
+                index,
+                row.id,
+                row.ordinal,
+                row.state,
+                row.locked,
+                &row.source,
+                &row.target,
+                is_active,
+            );
+        }
+        let page = (index / 128) * 128;
+        if !self.requested_pages.contains(&page)
+            && let Some(doc_id) = self.current_document_id
+            && self.send(
+                WorkerTask::Page(doc_id, page, String::new()),
+                PendingOp::Page(self.generation, page),
+            )
+        {
+            self.requested_pages.push(page);
+        }
+        self.render_segment_row(
+            entity,
+            index,
+            0,
+            index,
+            SegmentState::Draft,
+            false,
+            "Loading segment...",
+            "",
+            false,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_segment_row(
+        &self,
+        entity: &Entity<Self>,
+        index: usize,
+        seg_id: i64,
+        ord: usize,
+        state: SegmentState,
+        locked: bool,
+        src: &str,
+        tgt: &str,
+        is_active: bool,
+    ) -> AnyElement {
+        let entity_click = entity.clone();
+        let strip_color = if locked {
+            Theme::slate()
+        } else if state == SegmentState::Confirmed {
+            Theme::emerald()
+        } else if tgt.trim().is_empty() {
+            Theme::rose()
+        } else {
+            Theme::amber()
+        };
+
+        let number = div()
+            .id("ordinal")
+            .role(Role::Cell)
+            .aria_label(format!("{}", ord + 1))
+            .aria_column_index(0)
+            .w(px(50.))
+            .flex()
+            .items_center()
+            .gap_1()
+            .text_xs()
+            .font_weight(FontWeight::BOLD)
+            .text_color(if is_active {
+                Theme::sky()
+            } else {
+                Theme::text_muted()
+            })
+            .child(if locked {
+                div().child("🔒")
+            } else if is_active {
+                div().text_color(Theme::sky()).child("▶")
+            } else {
+                div()
+            })
+            .child(format!("{:>4}", ord + 1));
+
+        let source = if is_active {
+            div()
+                .id("active-source")
+                .accessibility_id("active-source")
+                .role(Role::TextInput)
+                .aria_label("Origen del segmento activo")
+                .aria_value(src.to_string())
+                .a11y_synthetic_children(|tree| tree.parent_node().set_read_only())
+        } else {
+            div()
+                .id("source")
+                .role(Role::Cell)
+                .aria_label("Origen")
+                .aria_value(src.to_string())
+                .a11y_synthetic_children(|tree| tree.parent_node().set_read_only())
+        };
+        let source = source
+            .aria_column_index(1)
+            .flex_1()
+            .min_w_0()
+            .text_sm()
+            .line_height(px(22.))
+            .text_color(Theme::text_primary())
+            .overflow_hidden()
+            .child(inline_text(src));
+
+        let target_aria = if is_active {
+            self.target_input.text.clone()
+        } else {
+            tgt.to_string()
+        };
+        let mut target = div()
+            .id("target")
+            .role(Role::Cell)
+            .aria_label("Destino")
+            .aria_value(target_aria)
+            .a11y_synthetic_children(|tree| tree.parent_node().set_read_only())
+            .aria_column_index(2)
+            .flex_1()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .overflow_hidden();
+
+        if let Some(score) = self.applied_tm.get(&seg_id) {
+            let badge = div()
+                .px_1p5()
+                .py_0p5()
+                .mr_auto()
+                .rounded_sm()
+                .text_xs()
+                .font_weight(FontWeight::BOLD)
+                .bg(Theme::violet_bg())
+                .text_color(Theme::violet())
+                .child(format!("TM {:.0}%", score));
+            target = target.child(badge);
+        }
+
+        let target = if is_active {
+            target.child(
+                input::accessible_input(
+                    input::InputField::Target,
+                    &self.target_input,
+                    entity.clone(),
+                    !locked,
+                )
+                .relative()
+                .child(input::native_input(
+                    self.target_input.focus_handle.clone(),
+                    entity.clone(),
+                ))
+                .track_focus(&self.target_input.focus_handle)
+                .on_mouse_down(MouseButton::Left, {
+                    let focus = self.target_input.focus_handle.clone();
+                    move |_, window, cx| focus.focus(window, cx)
+                })
+                .w_full()
+                .min_h(px(56.))
+                .p_2()
+                .rounded_md()
+                .bg(Theme::bg_app())
+                .border_1()
+                .border_color(if locked {
+                    Theme::border_subtle()
+                } else {
+                    Theme::border_accent()
+                })
+                .text_sm()
+                .line_height(px(24.))
+                .child(if self.target_input.text.is_empty() {
+                    div().text_color(Theme::text_muted()).child(if locked {
+                        "Este segmento está bloqueado."
+                    } else {
+                        "Escriba la traducción aquí..."
+                    })
+                } else {
+                    let cursor_pos = self.target_input.cursor.min(self.target_input.text.len());
+                    let before = self.target_input.text[..cursor_pos].to_string();
+                    let after = self.target_input.text[cursor_pos..].to_string();
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .flex_wrap()
+                        .child(inline_text(&before))
+                        .child(div().w(px(2.)).h(px(18.)).bg(Theme::sky()))
+                        .child(inline_text(&after))
+                }),
+            )
+        } else if tgt.is_empty() {
+            target.child(div().text_sm().text_color(Theme::text_muted()).child("—"))
+        } else {
+            target.child(
+                div()
+                    .text_sm()
+                    .line_height(px(22.))
+                    .text_color(Theme::text_accent())
+                    .child(inline_text(tgt)),
+            )
+        };
+
+        let state_str = if state == SegmentState::Confirmed {
+            "confirmado"
+        } else {
+            "borrador"
+        };
+        let lock_str = if locked { "bloqueado" } else { "editable" };
+        let state_cell = div()
+            .id("state")
+            .role(Role::Cell)
+            .aria_label("Estado")
+            .aria_value(format!("{state_str}; {lock_str}"))
+            .a11y_synthetic_children(|tree| tree.parent_node().set_read_only())
+            .aria_column_index(3)
+            .w(px(5.))
+            .self_stretch()
+            .rounded_full()
+            .bg(strip_color);
+
+        div()
+            .id(("segment", ord))
+            .accessibility_id(format!("segment-{seg_id}"))
+            .role(Role::Row)
+            .aria_label(format!("Segmento {}", ord + 1))
+            .aria_description(format!(
+                "{}; {}; {}; {}",
+                state_str,
+                lock_str,
+                if is_active {
+                    "seleccionado"
+                } else {
+                    "no seleccionado"
+                },
+                src,
+            ))
+            .aria_row_index(index)
+            .focusable()
+            .tab_stop(false)
+            .w_full()
+            .px_3()
+            .py_2()
+            .flex()
+            .items_start()
+            .gap_2()
+            .border_b_1()
+            .border_color(Theme::border_subtle())
+            .cursor_pointer()
+            .bg(if is_active {
+                Theme::bg_selected()
+            } else {
+                Theme::bg_card()
+            })
+            .hover(|s| s.bg(Theme::bg_hover()))
+            .when(is_active, |d| d.border_l_2().border_color(Theme::sky()))
+            .on_click(move |_event, _window, cx| {
+                if seg_id != 0 {
+                    entity_click.update(cx, |this, cx| {
+                        this.target_input.focus_handle.focus(_window, cx);
+                        if this.is_searching {
+                            this.is_searching = false;
+                            this.search_results.clear();
+                            this.search_input.set_text("");
+                        }
+                        this.select_segment(seg_id);
+                        cx.notify();
+                    });
+                }
+            })
+            .child(number)
+            .child(source)
+            .child(target)
+            .child(state_cell)
+            .into_any_element()
+    }
+
+    fn render_editor_toolbar(&self, entity: Entity<Self>) -> impl IntoElement {
+        let (has_active, ord, state, locked, origin_str) = if let Some(active) = &self.active_draft
+        {
+            (
+                true,
+                active.segment.ordinal + 1,
+                active.segment.state,
+                active.segment.locked,
+                active.segment.origin.as_str().to_string(),
+            )
+        } else {
+            (false, 0, SegmentState::Draft, false, "None".into())
+        };
 
         let entity_confirm = entity.clone();
         let entity_copy = entity.clone();
         let entity_lock = entity.clone();
         let entity_prev = entity.clone();
         let entity_next = entity.clone();
+        let entity_tag = entity.clone();
 
         let target_text = self.target_input.text.clone();
-        let cursor_pos = self.target_input.cursor;
 
         div()
-            .flex_1()
-            .p_4()
-            .bg(Theme::bg_app())
+            .id("editor-toolbar")
+            .role(Role::Toolbar)
+            .aria_label("Acciones del segmento")
+            .w_full()
+            .bg(Theme::bg_surface())
+            .border_b_1()
+            .border_color(Theme::border_subtle())
+            .px_3()
+            .py_1p5()
             .flex()
-            .flex_col()
-            .gap_3()
-            .child(
-                // Studio Header & Badges
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_3()
-                            .child(
-                                div()
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_base()
-                                    .text_color(Theme::text_primary())
-                                    .child(if has_active {
-                                        format!("Segment #{ord}")
-                                    } else {
-                                        "Translation Studio".into()
-                                    }),
-                            )
-                            .child(if has_active {
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap_2()
-                                    .child(status_badge(state, locked))
-                                    .child(
-                                        div()
-                                            .px_2()
-                                            .py_0p5()
-                                            .rounded_sm()
-                                            .bg(Theme::bg_subtle())
-                                            .text_xs()
-                                            .text_color(Theme::text_muted())
-                                            .child(format!("Origin: {origin_str}")),
-                                    )
-                            } else {
-                                div()
-                            }),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(custom_button(
-                                "Anterior",
-                                ButtonVariant::Ghost,
-                                has_active,
-                                move |_event, _window, cx| {
-                                    entity_prev.update(cx, |this, _cx| {
-                                        this.move_segment(-1);
-                                    });
-                                },
-                            ))
-                            .child(custom_button(
-                                "Siguiente",
-                                ButtonVariant::Ghost,
-                                has_active,
-                                move |_event, _window, cx| {
-                                    entity_next.update(cx, |this, _cx| {
-                                        this.move_segment(1);
-                                    });
-                                },
-                            )),
-                    ),
-            )
+            .flex_wrap()
+            .items_center()
+            .gap_2()
             .child(
                 div()
-                    .flex_1()
-                    .min_h(px(0.))
-                    .flex()
-                    .gap_3()
-                    .child(
-                        // Source Card (Read-Only)
-                        div()
-                            .flex_1()
-                            .min_w(px(0.))
-                            .rounded_md()
-                            .bg(Theme::bg_card())
-                            .border_1()
-                            .border_color(Theme::border_subtle())
-                            .p_3()
-                            .flex()
-                            .flex_col()
-                            .gap_1()
-                            .child(
-                                div()
-                                    .flex()
-                                    .justify_between()
-                                    .items_center()
-                                    .child(
-                                        div()
-                                            .text_xs()
-                                            .font_weight(FontWeight::BOLD)
-                                            .text_color(Theme::text_secondary())
-                                            .child("ORIGEN"),
-                                    )
-                                    .child(custom_button(
-                                        "Copiar origen",
-                                        ButtonVariant::Ghost,
-                                        has_active && !locked,
-                                        move |_event, _window, cx| {
-                                            entity_copy.update(cx, |this, _cx| {
-                                                this.copy_source_to_target();
-                                            });
-                                        },
-                                    )),
-                            )
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .line_height(px(22.))
-                                    .text_color(Theme::text_primary())
-                                    .child(inline_text(&src_text)),
-                            ),
-                    )
-                    .child(
-                        // Target Editor Card
-                        div()
-                            .flex_1()
-                            .min_w(px(0.))
-                            .rounded_md()
-                            .bg(Theme::bg_card())
-                            .border_1()
-                            .border_color(if locked {
-                                Theme::border_subtle()
-                            } else {
-                                Theme::border_accent()
-                            })
-                            .p_3()
-                            .flex()
-                            .flex_col()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .flex()
-                                    .justify_between()
-                                    .items_center()
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .gap_2()
-                                            .child(
-                                                div()
-                                                    .text_xs()
-                                                    .font_weight(FontWeight::BOLD)
-                                                    .text_color(Theme::text_accent())
-                                                    .child("DESTINO"),
-                                            )
-                                            .child(if locked {
-                                                div().text_xs().text_color(Theme::slate()).child(
-                                                    "(Locked - Click Lock button below to unlock)",
-                                                )
-                                            } else {
-                                                div()
-                                            }),
-                                    )
-                                    .child(div().text_xs().text_color(Theme::text_muted()).child(
-                                        format!(
-                                            "{} palabras · {} caracteres",
-                                            editing::words(&target_text),
-                                            target_text.chars().count(),
-                                        ),
-                                    )),
-                            )
-                            .child(
-                                // Target Text Area with Cursor
-                                div()
-                                    .id("target_editor_scroll")
-                                    .relative()
-                                    .child(input::native_input(
-                                        self.target_input.focus_handle.clone(),
-                                        entity.clone(),
-                                    ))
-                                    .track_focus(&self.target_input.focus_handle)
-                                    .on_mouse_down(MouseButton::Left, {
-                                        let focus = self.target_input.focus_handle.clone();
-                                        move |_, window, _| focus.focus(window)
-                                    })
-                                    .flex_1()
-                                    .p_2()
-                                    .rounded_md()
-                                    .bg(Theme::bg_app())
-                                    .border_1()
-                                    .border_color(Theme::border_subtle())
-                                    .overflow_y_scroll()
-                                    .text_sm()
-                                    .line_height(px(24.))
-                                    .child(if target_text.is_empty() {
-                                        div().text_color(Theme::text_muted()).child(if locked {
-                                    "This segment is locked from editing."
-                                } else {
-                                    "Type translation here... (or insert from TM on the right)"
-                                })
-                                    } else {
-                                        let before =
-                                            &target_text[..cursor_pos.min(target_text.len())];
-                                        let after =
-                                            &target_text[cursor_pos.min(target_text.len())..];
-                                        div()
-                                            .flex()
-                                            .flex_row()
-                                            .items_center()
-                                            .flex_wrap()
-                                            .child(inline_text(before))
-                                            .child(div().w(px(2.)).h(px(18.)).bg(Theme::sky()))
-                                            .child(inline_text(after))
-                                    }),
-                            )
-                            .child(
-                                // Action buttons
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .justify_between()
-                                    .child(div().flex().items_center().gap_2().child(
-                                        custom_button(
-                                            if locked { "Desbloquear" } else { "Bloquear" },
-                                            ButtonVariant::Secondary,
-                                            has_active,
-                                            move |_event, _window, cx| {
-                                                entity_lock.update(cx, |this, _cx| {
-                                                    this.toggle_active_lock();
-                                                });
-                                            },
-                                        ),
-                                    ))
-                                    .child(div().flex().items_center().gap_2().child(
-                                        custom_button(
-                                            "Confirmar y avanzar",
-                                            ButtonVariant::Success,
-                                            has_active && !locked,
-                                            move |_event, _window, cx| {
-                                                entity_confirm.update(cx, |this, _cx| {
-                                                    this.confirm_and_next();
-                                                });
-                                            },
-                                        ),
-                                    )),
-                            ),
-                    ),
+                    .font_weight(FontWeight::BOLD)
+                    .text_sm()
+                    .text_color(Theme::text_primary())
+                    .child(if has_active {
+                        format!("Segmento #{ord}")
+                    } else {
+                        "Sin segmento activo".into()
+                    }),
             )
+            .when(has_active, |d| {
+                d.child(status_badge(state, locked)).child(
+                    div()
+                        .px_2()
+                        .py_0p5()
+                        .rounded_sm()
+                        .bg(Theme::bg_subtle())
+                        .text_xs()
+                        .text_color(Theme::text_muted())
+                        .child(format!("Origen: {origin_str}")),
+                )
+            })
+            .child(div().flex_1())
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(Theme::text_muted())
+                    .child(format!(
+                        "{} palabras · {} caracteres",
+                        editing::words(&target_text),
+                        target_text.chars().count(),
+                    )),
+            )
+            .child(custom_button(
+                "segment-previous",
+                "Anterior",
+                ButtonVariant::Ghost,
+                has_active,
+                move |_event, _window, cx| {
+                    entity_prev.update(cx, |this, _cx| {
+                        this.move_segment(-1);
+                    });
+                },
+            ))
+            .child(custom_button(
+                "segment-next",
+                "Siguiente",
+                ButtonVariant::Ghost,
+                has_active,
+                move |_event, _window, cx| {
+                    entity_next.update(cx, |this, _cx| {
+                        this.move_segment(1);
+                    });
+                },
+            ))
+            .child(custom_button(
+                "source-copy",
+                "Copiar origen",
+                ButtonVariant::Ghost,
+                has_active && !locked,
+                move |_event, _window, cx| {
+                    entity_copy.update(cx, |this, _cx| {
+                        this.copy_source_to_target();
+                    });
+                },
+            ))
+            .child(custom_button(
+                "segment-lock",
+                if locked { "Desbloquear" } else { "Bloquear" },
+                ButtonVariant::Secondary,
+                has_active,
+                move |_event, _window, cx| {
+                    entity_lock.update(cx, |this, _cx| {
+                        this.toggle_active_lock();
+                    });
+                },
+            ))
+            .child(
+                custom_button(
+                    "insert-next-tag",
+                    "Etiqueta",
+                    ButtonVariant::Ghost,
+                    has_active && !locked,
+                    move |_, _, cx| {
+                        entity_tag.update(cx, |this, cx| {
+                            this.insert_next_tag();
+                            cx.notify();
+                        });
+                    },
+                )
+                .aria_label("Insertar siguiente etiqueta protegida")
+                .aria_keyshortcuts("Control+,"),
+            )
+            .child(custom_button(
+                "segment-confirm-next",
+                "Confirmar y avanzar",
+                ButtonVariant::Success,
+                has_active && !locked,
+                move |_event, _window, cx| {
+                    entity_confirm.update(cx, |this, _cx| {
+                        this.confirm_and_next();
+                    });
+                },
+            ))
     }
 
     fn render_right_panel(&self, entity: Entity<Self>) -> impl IntoElement {
@@ -1975,6 +2162,13 @@ impl LumenCatApp {
                     .flex()
                     .child(
                         div()
+                            .id("tm-tab")
+                            .accessibility_id("tm-tab")
+                            .role(Role::Tab)
+                            .aria_label("Memoria de traducción")
+                            .aria_selected(active_tab == RightTab::TranslationMemory)
+                            .focusable()
+                            .tab_stop(true)
                             .flex_1()
                             .h_full()
                             .flex()
@@ -1999,15 +2193,23 @@ impl LumenCatApp {
                             } else {
                                 rgba(0x00000000)
                             })
-                            .on_mouse_down(MouseButton::Left, move |_event, _window, cx| {
-                                entity_tm_tab.update(cx, |this, _cx| {
+                            .on_click(move |_event, _window, cx| {
+                                entity_tm_tab.update(cx, |this, cx| {
                                     this.active_tab = RightTab::TranslationMemory;
+                                    cx.notify();
                                 });
                             })
                             .child(format!("TM MATCHES ({})", matches.len())),
                     )
                     .child(
                         div()
+                            .id("qa-tab")
+                            .accessibility_id("qa-tab")
+                            .role(Role::Tab)
+                            .aria_label("Control de calidad")
+                            .aria_selected(active_tab == RightTab::QualityAssurance)
+                            .focusable()
+                            .tab_stop(true)
                             .flex_1()
                             .h_full()
                             .flex()
@@ -2040,9 +2242,10 @@ impl LumenCatApp {
                             } else {
                                 rgba(0x00000000)
                             })
-                            .on_mouse_down(MouseButton::Left, move |_event, _window, cx| {
-                                entity_qa_tab.update(cx, |this, _cx| {
+                            .on_click(move |_event, _window, cx| {
+                                entity_qa_tab.update(cx, |this, cx| {
                                     this.active_tab = RightTab::QualityAssurance;
+                                    cx.notify();
                                 });
                             })
                             .child(format!("QA ALERTS ({})", qa_issues.len())),
@@ -2051,6 +2254,8 @@ impl LumenCatApp {
             .child(
                 div()
                     .id("right_panel_scroll")
+                    .role(Role::TabPanel)
+                    .aria_label(if active_tab == RightTab::TranslationMemory { "Coincidencias TM" } else { "Avisos QA" })
                     .flex_1()
                     .overflow_y_scroll()
                     .p_3()
@@ -2061,6 +2266,9 @@ impl LumenCatApp {
                         if matches.is_empty() {
                             vec![
                                 div()
+                                    .id("tm-empty")
+                                    .role(Role::Label)
+                                    .aria_label("Sin coincidencias TM")
                                     .p_6()
                                     .text_center()
                                     .text_xs()
@@ -2075,6 +2283,10 @@ impl LumenCatApp {
                                 .map(|(idx, tm)| {
                                     let entity_insert = entity.clone();
                                     div()
+                                        .id(("tm-match", idx))
+                                        .accessibility_id(format!("tm-match-{}", idx + 1))
+                                        .role(Role::Group)
+                                        .aria_label(format!("Coincidencia {}: {:.0}%; origen: {}; destino: {}", idx + 1, tm.score, tm.source, tm.target))
                                         .p_3()
                                         .rounded_md()
                                         .bg(Theme::bg_card())
@@ -2090,6 +2302,7 @@ impl LumenCatApp {
                                                 .items_center()
                                                 .child(tm_badge(tm.score, tm.exact))
                                                 .child(custom_button(
+                                                    format!("tm-apply-{idx}"),
                                                     "Apply Match",
                                                     ButtonVariant::Secondary,
                                                     !is_locked,
@@ -2121,6 +2334,9 @@ impl LumenCatApp {
                         if qa_issues.is_empty() {
                             vec![
                                 div()
+                                    .id("qa-empty")
+                                    .role(Role::Label)
+                                    .aria_label("Sin avisos QA para el segmento activo")
                                     .p_6()
                                     .text_center()
                                     .flex()
@@ -2138,15 +2354,19 @@ impl LumenCatApp {
                                         div()
                                             .text_xs()
                                             .text_color(Theme::text_muted())
-                                            .child("No number mismatches, punctuation discrepancies, or length anomalies detected."),
+                                            .child("No number mismatches, punctuation discrepancies, or identity issues detected."),
                                     )
                                     .into_any_element(),
                             ]
                         } else {
                             qa_issues
                                 .iter()
-                                .map(|issue| {
+                                .enumerate()
+                                .map(|(index, issue)| {
                                     div()
+                                        .id(("qa-issue", index))
+                                        .role(Role::Alert)
+                                        .aria_label(format!("{}: {}", issue.code, issue.message))
                                         .p_3()
                                         .rounded_md()
                                         .bg(Theme::rose_bg())
@@ -2178,6 +2398,9 @@ impl LumenCatApp {
 
     fn render_progress(&self, entity: Entity<Self>) -> impl IntoElement {
         let (total, mut translated) = self.progress;
+        let enabled = !self.is_busy()
+            && !self.is_dirty()
+            && self.rows.values().any(|row| row.target.trim().is_empty());
         if let Some(active) = &self.active_draft {
             let was_translated = self
                 .rows
@@ -2193,95 +2416,78 @@ impl LumenCatApp {
             }
         }
         div()
+            .id("progress")
+            .accessibility_id("translation-progress")
+            .role(Role::Button)
+            .aria_label("Ir al primer segmento pendiente")
+            .aria_description(format!(
+                "{translated} de {total} segmentos con destino; {} pendientes",
+                total.saturating_sub(translated)
+            ))
+            .a11y_synthetic_children(move |tree| {
+                if !enabled {
+                    tree.parent_node().set_disabled();
+                }
+            })
+            .when(enabled, |d| d.focusable().tab_stop(true))
             .px_4()
             .py_1()
             .bg(Theme::bg_surface())
-            .cursor_pointer()
-            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                entity.update(cx, |this, cx| {
-                    if let Some(row) = this.rows.values().find(|s| s.target.trim().is_empty()) {
-                        this.select_segment(row.id);
-                    }
-                    cx.notify();
-                });
+            .when(enabled, |d| {
+                d.cursor_pointer().on_click(move |_, _, cx| {
+                    entity.update(cx, |this, cx| {
+                        if let Some(row) = this.rows.values().find(|s| s.target.trim().is_empty()) {
+                            this.select_segment(row.id);
+                        }
+                        cx.notify();
+                    });
+                })
             })
             .child(progress_bar(translated, total))
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(Theme::text_muted())
-                    .child(format!(
-                        "{} pendientes · clic para ir a un pendiente",
-                        total.saturating_sub(translated)
-                    )),
-            )
     }
 
     fn render_status_bar(&self) -> impl IntoElement {
         let is_dirty = self.is_dirty();
+        let status = if self.save_error {
+            "Error de guardado"
+        } else if self.message_error {
+            "Error"
+        } else if is_dirty {
+            "Guardando…"
+        } else {
+            "Guardado"
+        };
+        let visible = self.save_error || self.message_error || is_dirty || self.is_busy();
 
         div()
-            .h(px(30.))
+            .id("status")
+            .accessibility_id("application-status")
+            .role(Role::Status)
+            .aria_label(status)
+            .aria_value(self.message.clone())
+            .a11y_synthetic_children(|tree| {
+                tree.parent_node().set_read_only();
+                tree.parent_node().set_live(accesskit::Live::Polite);
+            })
+            .h(px(if visible { 30. } else { 0. }))
             .w_full()
             .bg(Theme::bg_surface())
-            .border_t_1()
-            .border_color(Theme::border_subtle())
             .px_3()
             .flex()
             .items_center()
-            .justify_between()
             .text_xs()
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_3()
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_1p5()
-                            .child(div().w(px(8.)).h(px(8.)).rounded_full().bg(
-                                if self.save_error {
-                                    Theme::rose()
-                                } else if is_dirty {
-                                    Theme::amber()
-                                } else {
-                                    Theme::emerald()
-                                },
-                            ))
-                            .child(
-                                div()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(if self.save_error {
-                                        Theme::rose()
-                                    } else if is_dirty {
-                                        Theme::amber()
-                                    } else {
-                                        Theme::emerald()
-                                    })
-                                    .child(if self.save_error {
-                                        "Save Error"
-                                    } else if is_dirty {
-                                        "Saving transaction..."
-                                    } else {
-                                        "All changes saved to disk"
-                                    }),
-                            ),
-                    )
-                    .child(div().h(px(14.)).w(px(1.)).bg(Theme::border_subtle()))
-                    .child(
-                        div()
-                            .text_color(Theme::text_secondary())
-                            .child(self.message.clone()),
-                    ),
-            )
-            .child(
-                div().flex().items_center().gap_3().child(
-                    div()
-                        .text_color(Theme::text_muted())
-                        .child("100% Local · SQLite ACID · No Cloud · AI Disabled"),
-                ),
-            )
+            .overflow_hidden()
+            .when(visible, |d| {
+                d.text_color(if self.save_error || self.message_error {
+                    Theme::rose()
+                } else {
+                    Theme::text_secondary()
+                })
+                .child(if is_dirty && !self.save_error && !self.message_error {
+                    status.into()
+                } else {
+                    self.message.clone()
+                })
+            })
     }
 }

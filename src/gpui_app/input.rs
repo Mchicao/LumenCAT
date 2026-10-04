@@ -3,6 +3,63 @@ use crate::model::Origin;
 use gpui::*;
 use std::ops::Range;
 
+#[derive(Clone, Copy)]
+pub enum InputField {
+    Target,
+    Search,
+    Replacement,
+}
+
+impl InputField {
+    fn id(self) -> &'static str {
+        match self {
+            Self::Target => "target-editor",
+            Self::Search => "search-query",
+            Self::Replacement => "replacement-text",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Target => "Destino",
+            Self::Search => "Buscar en origen y destino",
+            Self::Replacement => "Texto de reemplazo",
+        }
+    }
+}
+
+pub fn accessible_input(
+    field: InputField,
+    input: &InputModel,
+    entity: Entity<LumenCatApp>,
+    enabled: bool,
+) -> Stateful<Div> {
+    use gpui::prelude::*;
+    div()
+        .id(field.id())
+        .accessibility_id(field.id())
+        .role(Role::TextInput)
+        .aria_label(field.label())
+        .aria_value(input.text.clone())
+        .aria_placeholder(input.placeholder.clone())
+        .tab_stop(enabled)
+        .a11y_synthetic_children(move |tree| {
+            if !enabled {
+                tree.parent_node().set_read_only();
+            }
+        })
+        .when(enabled, |d| {
+            d.on_a11y_action(AccessibleAction::SetValue, move |data, _, cx| {
+                if let Some(accesskit::ActionData::Value(value)) = data {
+                    entity.update(cx, |this, cx| {
+                        this.set_accessible_value(field, value);
+                        cx.notify();
+                    });
+                }
+            })
+        })
+}
+
 pub fn native_input(focus: FocusHandle, entity: Entity<LumenCatApp>) -> impl IntoElement {
     use gpui::prelude::*;
     canvas(
@@ -16,6 +73,25 @@ pub fn native_input(focus: FocusHandle, entity: Entity<LumenCatApp>) -> impl Int
 }
 
 impl LumenCatApp {
+    fn set_accessible_value(&mut self, field: InputField, value: &str) {
+        if value.len() > 1_048_576 {
+            self.message = "El texto excede el límite de 1 MiB".into();
+            self.message_error = true;
+            return;
+        }
+        match field {
+            InputField::Target => {
+                if self.active_draft.as_ref().is_none_or(|a| a.segment.locked) {
+                    return;
+                }
+                self.target_input.set_text(value);
+                self.on_target_text_changed(Origin::Human);
+            }
+            InputField::Search => self.search_input.set_text(value),
+            InputField::Replacement => self.replacement_input.set_text(value),
+        }
+    }
+
     fn focused_input(&self, window: &Window) -> &InputModel {
         if self.search_input.focus_handle.is_focused(window) {
             &self.search_input

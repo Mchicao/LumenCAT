@@ -2,7 +2,7 @@ use crate::{gpui_app::LumenCatApp, worker::Worker};
 use gpui::*;
 
 pub fn run(project: Option<String>) {
-    Application::new().run(move |cx: &mut App| {
+    gpui_platform::application().run(move |cx: &mut App| {
         let (sender, receiver) = Worker::start_async();
 
         let options = WindowOptions {
@@ -20,7 +20,11 @@ pub fn run(project: Option<String>) {
 
         cx.open_window(options, move |window, cx| {
             let app = cx.new(|cx| LumenCatApp::new(sender, project, cx));
-            app.read(cx).target_input.focus_handle.focus(window);
+            app.read(cx)
+                .target_input
+                .focus_handle
+                .clone()
+                .focus(window, cx);
             let closing = app.downgrade();
             window.on_window_should_close(cx, move |_, cx| {
                 closing
@@ -76,7 +80,7 @@ pub fn run(project: Option<String>) {
                             app_clone.update(cx, |this, cx| {
                                 this.on_reply(reply);
                                 if focus_editor {
-                                    this.target_input.focus_handle.focus(window);
+                                    this.target_input.focus_handle.focus(window, cx);
                                 }
                                 cx.notify();
                                 if this.closing_requested && !this.opened {

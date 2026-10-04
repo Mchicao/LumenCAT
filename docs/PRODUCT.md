@@ -4,7 +4,7 @@
 
 ## Platform
 
-Escritorio nativo en Rust con GPUI 0.2.2 como interfaz predeterminada; egui queda disponible mediante `--legacy-egui`. Windows es la plataforma comprobada. No es una aplicación web ni móvil; la portabilidad a otros sistemas no está validada.
+Escritorio nativo en Rust con GPUI upstream fijado en el commit `8e7fbcc` (el crate conserva versión 0.2.2) como interfaz predeterminada; egui queda disponible mediante `--legacy-egui`. Windows es la plataforma comprobada. No es una aplicación web ni móvil; la portabilidad a otros sistemas no está validada.
 
 ## Users
 

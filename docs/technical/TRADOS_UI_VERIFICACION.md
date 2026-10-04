@@ -22,3 +22,7 @@ Se añaden Ctrl+Insert/Alt+Insert, Ctrl+T, Ctrl+1…9, F3, Ctrl+Alt+Enter y Shif
 ## Alcance
 
 Se validan los atajos principales de funciones existentes, no paridad completa con Trados. Confirmar no actualiza automáticamente la TM y avanza al segmento siguiente; QuickPlace inserta el siguiente tag. No se implementan terminología, ortografía ni configuración de atajos. Shift+F12 y Ctrl+2…9 están conectados, pero no se probaron individualmente con diálogos o nueve coincidencias. La interfaz egui anterior se conserva como alternativa; esta simplificación visual se aplica a GPUI.
+
+## Actualización 3 de octubre de 2026 — cuadrícula como editor
+
+El «Translation Studio» con tarjetas ORIGEN/DESTINO se eliminó: el grid bilingüe es ahora el editor, al modo de Trados. Cada fila muestra `# | origen | destino | barra de estado` (rojo sin destino, ámbar borrador, verde confirmado, gris bloqueado); la fila activa contiene el editor de destino dentro del propio grid y su celda de origen expone «Origen del segmento activo». El texto se envuelve (filas de altura variable), la fila activa se resalta con borde lateral y la toolbar «Acciones del segmento» (Anterior, Siguiente, Copiar origen, Bloquear, Etiqueta, Confirmar y avanzar) envuelve en varias líneas. Los AutomationId del modelo anterior se conservan (`target-editor`, `active-source`, `segment-*`, etc.), por lo que la guía COMPUTER_USE.md sigue siendo válida. Verificación de la nueva UI en `output/verification/e2e-trados-001/results.md` y en [VERIFICACION_E2E](VERIFICACION_E2E.md).

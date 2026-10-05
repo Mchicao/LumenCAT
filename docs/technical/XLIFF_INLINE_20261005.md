@@ -8,7 +8,7 @@ Estado: núcleo implementado y comprobado con archivos sintéticos; recorrido GP
 - El editor usa sus códigos existentes `<g id="N">`, `</g>` y `<x id="N"/>`. El contenido nativo de `bpt`/`ept`/`ph`/`it` no se expone como texto traducible.
 - Exporta recuperando las etiquetas nativas y conservando sus atributos, contenido, notas, cabecera y estructura ajena al destino. Cuando ya hay destino, sus etiquetas nativas tienen preferencia sobre las del origen.
 - Una traducción sin cambios conserva el XML original byte a byte. El archivo de entrada nunca se sobrescribe.
-- Confirmar verifica conservación de códigos y balance de grupos; exportar también comprueba el orden y anidación de pares nativos. Los segmentos con códigos no se aprenden todavía en la memoria textual.
+- Confirmar verifica conservación de códigos y balance de grupos; exportar también comprueba el orden y anidación de pares nativos. El corte posterior de TMX conserva la representación XLIFF persistida, sin cambiar los identificadores de proyectos existentes. Los segmentos con códigos no se aprenden todavía en la memoria de escritura.
 
 ## Evidencia
 
@@ -20,6 +20,6 @@ No se conduce ni reemplaza la instancia entregada al usuario en `file-menu-final
 
 ## Límites abiertos
 
-`seg-source`, `sub`, extensiones inline específicas, comentarios dentro de campos traducibles, literal `<g>`/`<x>` ambiguo, XLIFF 2.x y SDLXLIFF requieren cortes adicionales. No se aplanan silenciosamente. La conservación del balance de grupos al confirmar no sustituye la validación de pares nativos al exportar.
+`seg-source`, `sub`, extensiones inline específicas, comentarios dentro de campos traducibles, literal `<g>`/`<x>` ambiguo, pares nativos superpuestos, XLIFF 2.x y SDLXLIFF requieren cortes adicionales. No se aplanan silenciosamente.
 
 Los límites de documentos y segmentos siguen vigentes; no es un adaptador universal ni una validación completa contra XSD.

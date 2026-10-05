@@ -145,7 +145,7 @@ fn xliff_human_state_and_locks_roundtrip_without_stale_review_approval() -> Resu
 }
 
 #[test]
-fn tmx_stream_roundtrip_preserves_metadata_and_rejects_ambiguous_or_inline_units() -> Result<()> {
+fn tmx_stream_roundtrip_preserves_metadata_and_rejects_ambiguous_or_invalid_units() -> Result<()> {
     let xml = r#"<?xml version="1.0"?><tmx version="1.4" xmlns:customer="urn:customer"><header/><body><tu tuid="a" creationid="human" customer:domain="legal"><prop type="client">ACME</prop><tuv xml:lang="en"><seg>A &amp; B🙂</seg></tuv><tuv xml:lang="es"><prop type="note">legal</prop><seg>عربي日本語é</seg></tuv><tuv xml:lang="de"><seg>third variant</seg></tuv></tu></body></tmx>"#;
     let cancel = Cancellation::default();
     let mut units = Vec::new();
@@ -173,7 +173,7 @@ fn tmx_stream_roundtrip_preserves_metadata_and_rejects_ambiguous_or_inline_units
     assert!(reparsed[0].raw_xml.contains("customer:domain=\"legal\""));
     for tu in [
         r#"<tu><tuv xml:lang="en"><seg>A</seg></tuv><tuv xml:lang="EN"><seg>B</seg></tuv></tu>"#,
-        r#"<tu><tuv xml:lang="en"><seg>A<ph>x</ph></seg></tuv></tu>"#,
+        r#"<tu><tuv xml:lang="en"><seg>A<bpt i="1">x</bpt></seg></tuv></tu>"#,
     ] {
         let xml = format!("<tmx version=\"1.4\"><body>{tu}</body></tmx>");
         assert!(import_tmx(Cursor::new(xml), "en", "es", &cancel, |_| Ok(())).is_err());

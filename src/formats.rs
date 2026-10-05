@@ -788,11 +788,13 @@ fn parse_tu(
     let mut language = None;
     let mut languages = std::collections::HashSet::new();
     let mut segment = String::new();
+    let mut field: Option<(usize, usize)> = None;
     let mut seg_seen = false;
     let mut source = None;
     let mut target = None;
     loop {
         cancel.check()?;
+        let before = reader.buffer_position() as usize;
         let event = reader.read_event().map_err(invalid)?;
         check_decl(&event)?;
         match &event {
@@ -808,8 +810,11 @@ fn parse_tu(
                 if stack.len() >= 128 {
                     return Err(invalid("TU demasiado profundo"));
                 }
-                if stack.last().is_some_and(|n: &Vec<u8>| n == b"seg") {
-                    return Err(invalid("TMX inline codes no soportados todavía"));
+                if field.is_some() {
+                    if matches!(event, Event::Start(_)) {
+                        stack.push(name);
+                    }
+                    continue;
                 }
                 if name == b"tuv" {
                     let lang = attr(s, b"xml:lang")?
@@ -827,6 +832,9 @@ fn parse_tu(
                         return Err(invalid("seg fuera de tuv o duplicado"));
                     }
                     seg_seen = true;
+                    if matches!(event, Event::Start(_)) {
+                        field = Some((stack.len() + 1, reader.buffer_position() as usize));
+                    }
                 }
                 if matches!(event, Event::Start(_)) {
                     stack.push(name);
@@ -835,6 +843,13 @@ fn parse_tu(
             Event::End(e) => {
                 if stack.pop().as_deref() != Some(e.name().as_ref()) {
                     return Err(invalid("TU sin balance"));
+                }
+                if let Some((depth, content)) = field
+                    && stack.len() + 1 == depth
+                {
+                    segment = raw[content..before].into();
+                    inline::Fragment::parse_tmx(&segment, None, cancel)?;
+                    field = None;
                 }
                 if e.name().as_ref() == b"tuv" {
                     if !seg_seen {
@@ -856,12 +871,7 @@ fn parse_tu(
                     if text.chars().any(|c| !xml_char(c)) {
                         return Err(invalid("carácter XML inválido"));
                     }
-                    if stack.last().is_some_and(|n| n == b"seg") {
-                        segment.push_str(&text);
-                        if segment.len() > MAX_TEXT {
-                            return Err(invalid("segmento TMX supera 4 MiB"));
-                        }
-                    } else if stack.is_empty() && !text.trim().is_empty() {
+                    if field.is_none() && stack.is_empty() && !text.trim().is_empty() {
                         return Err(invalid("texto fuera de TU"));
                     }
                 }
@@ -871,13 +881,20 @@ fn parse_tu(
     if !root_seen || !stack.is_empty() {
         return Err(invalid("TU incompleto"));
     }
-    Ok(source.zip(target).map(|(source, target)| TmUnit {
-        source,
-        target,
-        source_lang: source_lang.into(),
-        target_lang: target_lang.into(),
-        raw_xml: raw.into(),
-    }))
+    if let Some((source, target)) = source.zip(target) {
+        let source = inline::Fragment::parse_tmx(&source, None, cancel)?;
+        let target = inline::Fragment::parse_tmx(&target, Some(&source), cancel)?;
+        source.render(&target.view, &target)?;
+        Ok(Some(TmUnit {
+            source: source.view,
+            target: target.view,
+            source_lang: source_lang.into(),
+            target_lang: target_lang.into(),
+            raw_xml: raw.into(),
+        }))
+    } else {
+        Ok(None)
+    }
 }
 
 pub fn export_tmx<W: Write>(

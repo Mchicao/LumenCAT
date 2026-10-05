@@ -1,0 +1,3 @@
+[cache]
+cache_executables = true
+local_max_size = "20GiB"

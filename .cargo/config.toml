@@ -1,2 +1,9 @@
 [build]
 target-dir = ".cache/target"
+rustc-wrapper = "kache"
+
+[alias]
+fast = "run"
+fast-check = "check --all-targets"
+fast-test = "nextest run"
+dbg = "run --profile debugging"

@@ -785,6 +785,7 @@ impl LumenCatApp {
         self.native_dialog_open = true;
         let path = rfd::FileDialog::new()
             .add_filter("TMX Translation Memory", &["tmx"])
+            .add_filter("SDLTM — requiere Trados Studio instalado", &["sdltm"])
             .pick_file();
         self.native_dialog_open = false;
         if let Some(path) = path {
@@ -795,7 +796,8 @@ impl LumenCatApp {
                 PendingOp::Operation,
             ) {
                 self.cancellations.insert(self.next_id, cancel);
-                self.message = "Importing TMX memory...".into();
+                self.message =
+                    "Importando memoria; SDLTM usa una copia y requiere Trados instalado...".into();
             }
         }
     }
@@ -845,6 +847,39 @@ impl LumenCatApp {
             ) {
                 self.cancellations.insert(self.next_id, cancel);
                 self.message = "Exporting project translation memory...".into();
+            }
+        }
+    }
+
+    pub fn update_sdltm_dialog(&mut self) {
+        if self.native_dialog_open || !self.opened || self.is_busy() || self.is_dirty() {
+            return;
+        }
+        self.native_dialog_open = true;
+        let source = rfd::FileDialog::new()
+            .set_title("Selecciona SDLTM base — el original no se modificará")
+            .add_filter("SDLTM — requiere Trados Studio instalado", &["sdltm"])
+            .pick_file();
+        let destination = source.as_ref().and_then(|source| {
+            let name = format!("{}-actualizada.sdltm", source.file_stem().unwrap_or_default().to_string_lossy());
+            rfd::FileDialog::new()
+                .set_title("Guardar una copia SDLTM actualizada — reemplaza coincidencias exactas en la copia")
+                .set_file_name(name)
+                .add_filter("SDLTM", &["sdltm"])
+                .save_file()
+        });
+        self.native_dialog_open = false;
+        if let Some((source, destination)) = source.zip(destination) {
+            let (sl, tl) = self.document_languages();
+            let cancel = Cancellation::default();
+            if self.send(
+                WorkerTask::UpdateSdltm(source, destination, sl, tl, cancel.clone()),
+                PendingOp::Operation,
+            ) {
+                self.cancellations.insert(self.next_id, cancel);
+                self.message =
+                    "Actualizando una copia SDLTM mediante Trados; el original queda intacto..."
+                        .into();
             }
         }
     }

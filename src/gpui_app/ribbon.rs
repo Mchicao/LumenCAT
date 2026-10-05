@@ -75,6 +75,7 @@ enum Command {
     ExportDocument,
     ImportMemory,
     ExportMemory,
+    UpdateSdltm,
     MemoryResources,
     Concordance,
     Replace,
@@ -98,7 +99,7 @@ impl Command {
             Self::NewProject => IconName::FilePlus,
             Self::OpenProject => IconName::FolderOpen,
             Self::ImportDocument | Self::ImportMemory => IconName::Upload,
-            Self::Save => IconName::Save,
+            Self::Save | Self::UpdateSdltm => IconName::Save,
             Self::ExportDocument | Self::ExportMemory => IconName::Download,
             Self::MemoryResources | Self::Tm => IconName::BookOpen,
             Self::Concordance | Self::Replace => IconName::Search,
@@ -122,8 +123,9 @@ impl Command {
             Self::ImportDocument => "Importar documento",
             Self::Save => "Guardar",
             Self::ExportDocument => "Exportar documento",
-            Self::ImportMemory => "Importar TMX",
+            Self::ImportMemory => "Importar memoria",
             Self::ExportMemory => "Exportar TMX",
+            Self::UpdateSdltm => "Actualizar SDLTM (copia, requiere Trados)",
             Self::MemoryResources => "Memorias del proyecto",
             Self::Concordance => "Concordancia",
             Self::Replace => "Buscar y reemplazar",
@@ -162,6 +164,7 @@ impl Command {
             Self::ExportDocument => "document-export",
             Self::ImportMemory => "tm-import",
             Self::ExportMemory => "tm-export",
+            Self::UpdateSdltm => "tm-update-sdltm",
             Self::MemoryResources => "memory-menu",
             Self::Concordance => "ribbon-concordance",
             Self::Replace => "ribbon-replace",
@@ -186,6 +189,7 @@ impl Command {
             | Self::ImportMemory
             | Self::ExportMemory
             | Self::MemoryResources => ready,
+            Self::UpdateSdltm => ready && crate::formats::sdltm::available(),
             Self::Save => app.opened && !app.is_busy() && !app.save_error,
             Self::ExportDocument => ready && app.current_document_id.is_some(),
             Self::Concordance | Self::Replace => {
@@ -233,6 +237,7 @@ impl LumenCatApp {
             Command::ExportDocument => self.export_document_dialog(),
             Command::ImportMemory => self.import_tmx_dialog(),
             Command::ExportMemory => self.export_tmx_dialog(),
+            Command::UpdateSdltm => self.update_sdltm_dialog(),
             Command::MemoryResources => {
                 self.show_memory_actions = !self.show_memory_actions;
                 self.show_documents = true;
@@ -310,6 +315,7 @@ impl LumenCatApp {
                 Command::MemoryResources,
                 Command::ImportMemory,
                 Command::ExportMemory,
+                Command::UpdateSdltm,
                 Command::Concordance,
                 Command::Replace,
             ],
@@ -655,9 +661,9 @@ impl LumenCatApp {
             FileSection::Open => content
                 .child(self.file_action(Command::OpenProject, "Continúa un proyecto local de LumenCAT.", "Ctrl+O", entity.clone()))
                 .child(self.file_action(Command::ImportDocument, "Añade un DOCX, XLIFF 1.2 o TXT al proyecto abierto.", "", entity.clone()))
-                .child(self.file_action(Command::ImportMemory, "Importa una memoria TMX al proyecto abierto.", "", entity.clone()))
+                .child(self.file_action(Command::ImportMemory, "Importa TMX o SDLTM; SDLTM requiere Trados instalado y usa una copia privada.", "", entity.clone()))
                 .child(div().mt_4().max_w(px(650.)).text_sm().text_color(Theme::text_secondary()).child(
-                    "No se abren paquetes Trados, SDLTM ni SDLXLIFF. Para importar documentos o memorias, primero abre o crea un proyecto.",
+                    "No se abren paquetes Trados ni SDLXLIFF. SDLTM se importa desde Avanzado con Trados instalado. Para importar documentos o memorias, primero abre o crea un proyecto.",
                 )),
             FileSection::New => content
                 .child(self.file_action(Command::NewProject, "Elige dónde guardar el nuevo proyecto local.", "Ctrl+N", entity.clone()))

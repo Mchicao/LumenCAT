@@ -76,3 +76,26 @@ fn malformed_native_pairs_roll_back_the_entire_memory_import() -> Result<()> {
     store.close()?;
     Ok(())
 }
+
+#[test]
+fn language_specific_formatting_is_preserved_without_inventing_source_tags() -> Result<()> {
+    let xml = r#"<tmx version="1.4"><body><tu><tuv xml:lang="en"><seg>Plain source</seg></tuv><tuv xml:lang="es"><seg><bpt i="2" x="target-only"/>Destino<ept i="2"/><ph x="extra"/></seg></tuv></tu></body></tmx>"#;
+    let cancel = Cancellation::default();
+    let mut units = Vec::new();
+    assert_eq!(
+        formats::import_tmx(Cursor::new(xml), "en", "es", &cancel, |unit| {
+            units.push(unit);
+            Ok(())
+        })?,
+        1
+    );
+    assert_eq!(units[0].source, "Plain source");
+    assert!(units[0].target.contains("Destino</g>"));
+    let mut output = Vec::new();
+    formats::export_tmx(&mut output, units.into_iter().map(Ok), &cancel)?;
+    let output = String::from_utf8(output).map_err(|error| CatError::Format(error.to_string()))?;
+    assert!(
+        output.contains("<bpt i=\"2\" x=\"target-only\"/>Destino<ept i=\"2\"/><ph x=\"extra\"/>")
+    );
+    Ok(())
+}

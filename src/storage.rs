@@ -1,11 +1,11 @@
 //! One owning worker holds the connection. Every edit and its undo record commit together.
 use crate::{formats, model::*, tm};
 use rusqlite::{Connection, params};
-mod migrations;
+pub(crate) mod migrations;
 mod terminology;
 use std::{
     fs::{File, OpenOptions},
-    io::{BufReader, BufWriter, Write},
+    io::{BufWriter, Write},
     path::{Path, PathBuf},
 };
 
@@ -593,11 +593,19 @@ impl ProjectStore {
         tl: &str,
         cancel: &Cancellation,
     ) -> Result<usize> {
+        self.import_memory(path, sl, tl, cancel)
+    }
+    pub fn import_memory(
+        &mut self,
+        path: &Path,
+        sl: &str,
+        tl: &str,
+        cancel: &Cancellation,
+    ) -> Result<usize> {
         self.writable()?;
-        let reader = BufReader::new(File::open(path)?);
         let tx = self.connection.transaction()?;
         let mut count = 0;
-        formats::import_tmx(reader, sl, tl, cancel, |unit| {
+        formats::import_memory(path, sl, tl, cancel, |unit| {
             count += tm::insert(&tx, &unit)?;
             Ok(())
         })?;
@@ -628,6 +636,14 @@ impl ProjectStore {
         tm::concordance(&self.connection, query, sl, tl)
     }
     pub fn export_tm(&self, path: &Path, cancel: &Cancellation) -> Result<usize> {
+        self.export_tm_filtered(path, None, cancel)
+    }
+    fn export_tm_filtered(
+        &self,
+        path: &Path,
+        languages: Option<(&str, &str)>,
+        cancel: &Cancellation,
+    ) -> Result<usize> {
         let parent = path
             .parent()
             .filter(|p| !p.as_os_str().is_empty())
@@ -635,16 +651,19 @@ impl ProjectStore {
         let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
         let mut stmt = self
             .connection
-            .prepare("SELECT source,target,source_lang,target_lang,raw_xml FROM tm WHERE active=1 ORDER BY id")?;
-        let units = stmt.query_map([], |r| {
-            Ok(TmUnit {
-                source: r.get(0)?,
-                target: r.get(1)?,
-                source_lang: r.get(2)?,
-                target_lang: r.get(3)?,
-                raw_xml: r.get(4)?,
-            })
-        })?;
+            .prepare("SELECT source,target,source_lang,target_lang,raw_xml FROM tm WHERE active=1 AND (?1 IS NULL OR source_lang=?1 COLLATE NOCASE) AND (?2 IS NULL OR target_lang=?2 COLLATE NOCASE) ORDER BY id")?;
+        let units = stmt.query_map(
+            params![languages.map(|pair| pair.0), languages.map(|pair| pair.1)],
+            |r| {
+                Ok(TmUnit {
+                    source: r.get(0)?,
+                    target: r.get(1)?,
+                    source_lang: r.get(2)?,
+                    target_lang: r.get(3)?,
+                    raw_xml: r.get(4)?,
+                })
+            },
+        )?;
         let count = {
             let mut writer = BufWriter::new(temporary.as_file_mut());
             let count = formats::export_tmx(
@@ -661,6 +680,23 @@ impl ProjectStore {
             .persist_noclobber(path)
             .map_err(|error| CatError::Io(error.error))?;
         Ok(count)
+    }
+    pub fn update_sdltm(
+        &self,
+        source: &Path,
+        destination: &Path,
+        sl: &str,
+        tl: &str,
+        cancel: &Cancellation,
+    ) -> Result<formats::sdltm::Report> {
+        let directory = tempfile::tempdir()?;
+        let interchange = directory.path().join("updates.tmx");
+        if self.export_tm_filtered(&interchange, Some((sl, tl)), cancel)? == 0 {
+            return Err(CatError::Invalid(
+                "No hay unidades activas del par seleccionado para actualizar SDLTM".into(),
+            ));
+        }
+        formats::sdltm::update(source, destination, &interchange, sl, tl, cancel)
     }
     pub fn close(&mut self) -> Result<()> {
         if !self.closed {

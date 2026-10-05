@@ -1,7 +1,7 @@
 ## Sub-features
 
 - `formats.import-txt`: importar TXT UTF-8; cada línea es un segmento y se conservan terminadores y BOM.
-- `formats.import-xliff`: importar XLIFF 1.2 textual (sin códigos inline ni `seg-source`), preservando el envelope.
+- `formats.import-xliff`: importar XLIFF 1.2 textual o con códigos protegidos, preservando el envelope; `seg-source` sigue pendiente.
 - `formats.import-docx`: importar DOCX con códigos protegidos `<g id="k">`/`<x id="k"/>` en fronteras de estilo, tablas e imágenes.
 - `formats.language-conflict`: rechazar XLIFF cuyo `source-language`/`target-language` declarado contradice el par elegido, sin crear documento ni relabelar el envelope.
 - `formats.import-reject`: rechazar formatos no soportados y XML inválido con mensaje explícito, sin crear documento.
@@ -17,7 +17,7 @@ Con proyecto abierto, entra en **Archivo**, pulsa **Importar documento** (diálo
 
 En XLIFF exportado, el envelope se conserva salvo el contenido `target` y los atributos de estado: la exportación escribe `state="translated"` (confirmado) o `state="needs-review-translation"` (borrador) y rebaja `approved="yes"` a `no` si el contenido cambió. En TXT exportado cada destino ocupa su línea con los terminadores originales. En DOCX exportado el paquete original sigue siendo el esqueleto con los destinos reconstruidos; exige los códigos `<g>/<x/>` del original en el destino.
 
-Negativos útiles: extensión no soportada (p. ej. `.rtf`) → mensaje pidiendo TXT UTF-8, XLIFF 1.2 textual o DOCX; XLIFF con códigos inline en `source/target` o con XML roto → rechazo explícito sin crear documento; exportar a un destino existente → «destino ya existe»; DOCX cuyo destino perdió un código → rechazo citando el código, sin archivo parcial.
+Negativos útiles: extensión no soportada (p. ej. `.rtf`) → mensaje pidiendo TXT UTF-8, XLIFF 1.2 o DOCX; XLIFF con `sub`, `seg-source` o XML roto → rechazo explícito sin crear documento; exportar a un destino existente → «destino ya existe»; DOCX/XLIFF cuyo destino perdió un código → rechazo citando el código, sin archivo parcial.
 
 ## Driving it with cua-driver
 
@@ -25,12 +25,12 @@ Usa el controlador con un `RunId` nuevo: `pwsh -NoProfile -File scripts/utils/co
 
 Recorrido mínimo acreditable: importar `source.txt` → editar destino del segmento 1 y confirmar («Confirmar y avanzar») → exportar a nombre nuevo → comparar el TXT resultante con el esperado (destinos con CRLF) y verificar por hash que el original no cambió. Añade: importar `sample.xlf` (1 unidad, confirma el envelope), importar un DOCX de prueba con códigos, exportarlo y reabrirlo, y los negativos de arriba. Verifica archivos exportados con PowerShell/Python (zip válido para DOCX, XML parseable para XLIFF/TMX, contenido esperado para TXT): esa comprobación es parte de la evidencia.
 
-Corpus extra para negativos: créalo TÚ dentro de la carpeta del RunId tras el launch (no modifica el proyecto): un `.rtf` de una línea, un `.xlf` con XML roto y un `.xlf` 1.2 con `<bpt>/<ept>` en `source`. Para DOCX de prueba, genera un paquete OPC mínimo con Python (zip con `[Content_Types].xml`, `_rels/.rels`, `word/document.xml`) o reutiliza fixtures de verificación previa; documenta cuál usaste.
+Corpus extra: créalo TÚ dentro de la carpeta del RunId tras el launch (no modifica el proyecto): un `.rtf` de una línea, un `.xlf` con XML roto y un `.xlf` 1.2 con pares `<bpt>/<ept>` válidos como positivo y otro par incoherente como negativo. Para DOCX de prueba, genera un paquete OPC mínimo con Python (zip con `[Content_Types].xml`, `_rels/.rels`, `word/document.xml`) o reutiliza fixtures de verificación previa; documenta cuál usaste.
 
 ## Gotchas
 
 - Límites: documento general 256 MiB, DOCX 128 MiB y parte 32 MiB, texto de segmento 4 MiB al importar y 1 MiB persistido; superarlos da error explícito, no truncado.
-- XLIFF: versión `1.2`, namespace OASIS o sin namespace como el corpus de launch; namespace declarado incorrecto se rechaza. DTD/entidades externas, códigos inline y `seg-source` rechazados; `trans-unit` sin `id`/`source` o con `id` duplicado por `file` se rechazan.
+- XLIFF: versión `1.2`, namespace OASIS o sin namespace como el corpus de launch; namespace declarado incorrecto se rechaza. Admite `g`, `mrk`, `x`, `ph`, `bpt`, `ept`, `it`, `bx`, `ex`. DTD/entidades externas, `sub`, extensiones inline y `seg-source` rechazados; `trans-unit` sin `id`/`source` o con `id` duplicado por `file` se rechazan.
 - El par de próximas importaciones se guarda desde el lateral; los documentos existentes conservan el suyo. Negativo probado: proyecto en→fr + `sample.xlf` en→es produce «Conflicto de idioma XLIFF» y no añade documento. XLIFF sin atributos de idioma usa el par elegido.
 - TXT: un destino con `\r\n` añadido falla la exportación («target TXT no puede agregar líneas estructurales»); BOM y finales mixtos CRLF/LF se preservan.
 - DOCX: sin un código del original en el destino la reconstrucción falla («código…»), sin duplicar ni anidar `<g>`; estructuras no soportadas (campos, tracked changes, `w:tab/w:br`, headers/footers, SmartArt) se rechazan con mensaje al importar, no se silencian.
@@ -38,4 +38,4 @@ Corpus extra para negativos: créalo TÚ dentro de la carpeta del RunId tras el 
 - El diálogo Guardar de exportación NO avisa de sobrescritura por sí solo: al elegir un archivo existente, el SO muestra «Confirmar Guardar como»; tras aceptar, la app rechaza con «destino ya existe; elija un archivo nuevo» y no escribe nada. El botón **Guardar** de ese diálogo tiene rol `Button` (no SplitButton como **Abrir**), y Enter en la confirmación del SO elige «No» (cancel).
 - `type` inserta en «Nombre:»; sustituye el campo completo con `scripts/set-field.ps1 -WindowId <HWND> -Label 'Nombre:' -Value '<ruta nueva>'` de la skill y verifica lectura exacta antes de Abrir/Guardar.
 - Con estado sucio, el PRIMER clic en «Exportar documento» autoguarda y no abre el diálogo; pulsa de nuevo. No pulses «Exportar documento» con un diálogo abierto: se apilan diálogos del mismo PID (bug menor registrado en `output/verification/bugs-formats.md`).
-- Pendiente declarado: SDLXLIFF/paquetes, códigos inline XLIFF y TMX con códigos. No hay arrastrar y soltar ni observador de carpeta. ZIP/XML y negrita DOCX verificados no acreditan apertura en Word ni intercambio con Trados.
+- Pendiente declarado: SDLXLIFF/paquetes, XLIFF segmentado/2.x y recorridos GUI del nuevo soporte inline. No hay arrastrar y soltar ni observador de carpeta. Pruebas de núcleo no acreditan GUI ni compatibilidad universal con Word/Trados.

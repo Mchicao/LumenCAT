@@ -34,7 +34,7 @@ Automatic saving and persistent edit history help preserve your progress between
 
 ## Your documents, together
 
-Keep projects, documents, and translation memories organized locally. LumenCAT currently supports plain text documents, text-based XLIFF 1.2 files, Microsoft Word DOCX documents with tables, inline pictures, and mixed formatting exposed as protected codes, and text-based TMX translation memories.
+Keep projects, documents, and translation memories organized locally. LumenCAT supports UTF-8 text documents, XLIFF 1.2 with protected inline codes, conservative Microsoft Word DOCX processing, and TMX 1.4/1.4b translation memories with native codes and TU metadata. An optional Windows bridge imports SDLTM and creates updated copies through the official API of an installed Trados Studio; it never overwrites the original. Full format parity remains work in progress: see the [format compatibility execution map](docs/architecture/PARIDAD_FORMATOS.md).
 
 ## Built around translator autonomy
 

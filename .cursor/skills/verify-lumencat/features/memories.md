@@ -1,7 +1,8 @@
 ## Sub-features
 
 - `memories.tm-tab-apply`: pestaña **TM MATCHES** del panel derecho con coincidencias exactas/fuzzy del segmento activo e inserción explícita (**Apply Match** / `tm-apply-N`, Ctrl+T o Ctrl+1..9).
-- `memories.tmx-import`: importar TMX 1.4 textual desde **Avanzado → Importar TMX** (también en Archivo); termina con «TM importada: N unidades».
+- `memories.tmx-import`: importar TMX 1.4/1.4b con códigos desde **Avanzado → Importar memoria** (también en Archivo); termina con «TM importada: N unidades».
+- `memories.sdltm-import` / `memories.sdltm-update-copy`: importar SDLTM mediante copia privada y generar una copia actualizada desde **Avanzado → Actualizar SDLTM (copia, requiere Trados)**. Requiere Studio instalado; no sobrescribe originales ni destinos existentes. GUI de este corte todavía NOT RUN; CORE+SDK verificados por separado.
 - `memories.tmx-export`: exportar las unidades del proyecto a TMX nueva desde **Avanzado → Exportar TMX** (también en Archivo); validar el XML resultante.
 - `memories.concordance-query`: concordancia sobre la memoria (botón **Concordancia** / F3) con resultados en la pestaña TM.
 - `memories.create`: crear colecciones y elegir memoria de escritura compatible con el par del documento.
@@ -10,7 +11,7 @@
 
 ## How to get to it (user POV)
 
-**Importar TMX**: pulsa **Avanzado → Importar TMX**. **Memorias del proyecto** (`memory-menu`) muestra el gestor de colecciones en el lateral. Importar abre diálogo `.tmx`; la barra informa «TM importada: N unidades». Los recursos viven dentro del `.lcat`, para el par del documento activo.
+**Importar memoria**: pulsa **Avanzado → Importar memoria**. **Memorias del proyecto** (`memory-menu`) muestra el gestor de colecciones en el lateral. Importar abre diálogo `.tmx`/`.sdltm`; la barra informa «TM importada: N unidades». Los recursos viven dentro del `.lcat`, para el par del documento activo. SDLTM usa SDK de Trados sobre una copia SQLite consistente; configura el par exacto declarado, incluidas regiones.
 
 **Aprender**: escribe «Nombre de memoria», pulsa **Crear memoria** y **Usar para aprender** en la colección compatible. Confirma una traducción y selecciona una repetición: debe ofrecerla con colección/procedencia. La memoria inicial puede requerir selección explícita. **Desactivar aprendizaje**, **Pasar a solo lectura** y **Excluir de búsquedas** no borran unidades; exportar incluye unidades activas incluso de colecciones excluidas. Véase [MEMORIAS](../../../../docs/guides/MEMORIAS.md).
 
@@ -24,7 +25,9 @@
 
 Con el controlador (`launch -WaitSeconds 1200`, mismo `RunId` en cada acción): importa `source.txt`, importa `sample.tmx` (corpus del controlador: Hello world → Hola mundo) y verifica «TM importada: 1 unidades» en la barra de estado (`application-status`). Muévete al segmento 2 («Hello world»): la pestaña **TM** debe listar un exacto 100 % con «Tgt: Hola mundo» y procedencia importada; pulsa **Apply Match** y comprueba que el destino del editor pasa a «Hola mundo». Exporta TMX a nombre nuevo del RunId y valida el XML con Python (ElementTree) o PowerShell: `<tmx version="1.4">` y la unidad importada presente.
 
-Negativos en UI: segmento bloqueado → el botón **Apply Match** está deshabilitado (clic sin efecto y token `enabled=false` en el árbol); TMX con versión distinta de 1.4 o con códigos inline → mensaje de rechazo y 0 unidades; exportar TMX sobre un destino existente → error «destino ya existe». Persistencia: `-Action reopen` reutiliza el proyecto; la memoria importada sigue respondiendo al segmento 2 tras reabrir.
+Negativos en UI: segmento bloqueado → el botón **Apply Match** está deshabilitado (clic sin efecto y token `enabled=false` en el árbol); TMX con versión inválida o pares nativos incoherentes → mensaje de rechazo y 0 unidades; exportar TMX sobre un destino existente → error «destino ya existe». Persistencia: `-Action reopen` reutiliza el proyecto; la memoria importada sigue respondiendo al segmento 2 tras reabrir.
+
+Para SDLTM usa únicamente copias de las muestras públicas de la instalación dentro del RunId: importa una con el par exacto, confirma una traducción nueva y ejecuta **Actualizar SDLTM (copia, requiere Trados)** eligiendo original y destino nuevo. Verifica en API/Trados la búsqueda exacta/fuzzy de la copia y hashes intactos del original. Negativos: otro par, destino existente y ausencia del SDK. No uses una memoria personal ni conduzcas una instancia del usuario.
 
 Evidencia: capturas before/after de cada clic (el controlador las guarda) y el TMX exportado dentro del RunId. No acredites consultas ni exportación solo con `tests/tm_retrieval.rs` o `tests/tm_learning.rs`: son núcleo.
 
@@ -34,7 +37,8 @@ Evidencia: capturas before/after de cada clic (el controlador las guarda) y el T
 - Tras reabrir el proyecto (`-Action reopen`), la memoria importada sigue respondiendo; el badge «TM 100 %» en la columna TARGET marca los segmentos cuya traducción viene de TM.
 - En `audit-main-gpui-20261004` (base `524046f`) se seleccionó memoria de escritura, confirmó, reutilizó el aprendido en otra fila y exportó junto a la TMX importada. La creación y los toggles avanzados no se condujeron en esa pasada; `tests/tm_learning.rs` es evidencia CORE, no GUI.
 - La importación TMX usa el par del documento activo; con varios documentos de pares distintos, selecciona primero el documento cuyo par debe recibir la memoria.
-- TMX: solo 1.4/1.4b textual; TU con códigos inline, vacío, ambiguo en idiomas o mayor a 8 MiB se rechaza. El header del TMX importado no se conserva: la exportación regenera el header con LumenCAT y revalida cada TU.
+- TMX: 1.4/1.4b UTF-8, texto y `bpt/ept`, `ph`, `it`, `hi`, `ut`; `sub`, pares incoherentes, idiomas ambiguos o TU mayor a 8 MiB se rechazan. El header importado no se conserva; propiedades/atributos TU y otras variantes sí se preservan. Un formato exclusivo del destino no inventa etiquetas en el origen.
+- SDLTM: ruta opcional SDK Windows, no escritor SQL portable ni redistribución de DLL RWS. Instancia/recorrido GUI pendientes; `tests/sdltm_sdk.rs` se ignora en la suite ordinaria y debe ejecutarse explícitamente con `--ignored` y un directorio de evidencia nuevo.
 - Coincidencias: exactas por normalización NFC; fuzzy aproximado con umbral 50 %, top 8; agrupan destinos equivalentes. No es context match ni garantiza recall exhaustivo.
 - El indicador «TM aplicado» de la sesión no se persiste; tras reabrir, el porcentaje histórico desaparece aunque el texto insertado persista.
 - Hotkeys Ctrl+T / Ctrl+1..9 dependen del transporte background de GPUI: si `background_unavailable`, usa el botón **Apply Match** y registra el atajo como BLOCKED, no como bug.

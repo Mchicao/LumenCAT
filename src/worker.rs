@@ -36,6 +36,7 @@ pub enum Task {
     Concordance(String, String, String, Cancellation),
     ImportTm(PathBuf, String, String, Cancellation),
     ExportTm(PathBuf, Cancellation),
+    UpdateSdltm(PathBuf, PathBuf, String, String, Cancellation),
     Export(i64, PathBuf, Cancellation),
     Close,
     Qa(i64, String, String, bool),
@@ -197,12 +198,19 @@ fn run(store: &mut Option<ProjectStore>, task: Task) -> Result<Data> {
             db.concordance_cancel(&query, &sl, &tl, &cancel)?,
         )),
         Task::ImportTm(path, sl, tl, cancel) => {
-            let count = db.import_tmx(&path, &sl, &tl, &cancel)?;
+            let count = db.import_memory(&path, &sl, &tl, &cancel)?;
             Ok(Data::Done(format!("TM importada: {count} unidades")))
         }
         Task::ExportTm(path, cancel) => {
             db.export_tm(&path, &cancel)?;
             Ok(Data::Done("Memoria exportada".into()))
+        }
+        Task::UpdateSdltm(source, destination, sl, tl, cancel) => {
+            let report = db.update_sdltm(&source, &destination, &sl, &tl, &cancel)?;
+            Ok(Data::Done(format!(
+                "Copia SDLTM actualizada: {} leídas, {} importadas, {} añadidas, {} reemplazadas, {} combinadas. Original intacto.",
+                report.read, report.imported, report.added, report.overwritten, report.merged
+            )))
         }
         Task::Export(id, path, cancel) => {
             let document = db.load_document(id)?;

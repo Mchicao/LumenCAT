@@ -10,7 +10,9 @@
 
 **Desactivar aprendizaje** permite confirmar sin escribir TM. Puedes pasar una colección a solo lectura o excluirla de búsquedas sin eliminar sus unidades. Cambiar el par del proyecto deja sin selección de escritura una memoria incompatible; selecciona una del nuevo par. El par del documento activo sigue gobernando búsquedas y aprendizaje.
 
-Importar TMX añade unidades a una colección **Memoria importada** por par de idiomas. Exportar TMX exporta unidades importadas y versiones aprendidas activas de todas las colecciones, incluso las excluidas de búsquedas. Una importación de otra traducción no sustituye variantes existentes. Los recursos permanecen dentro del `.lcat`; todavía no se usan memorias externas compartidas.
+Importar TMX o SDLTM añade unidades a una colección **Memoria importada** por par de idiomas. SDLTM requiere Trados Studio instalado/licenciado para exportar una copia privada a TMX; verifica el par exacto, incluidas regiones. Exportar TMX exporta unidades importadas y versiones aprendidas activas de todas las colecciones, incluso las excluidas de búsquedas. Una importación de otra traducción no sustituye variantes existentes. Los recursos permanecen dentro del `.lcat`; todavía no se usan memorias externas compartidas.
+
+**Avanzado → Actualizar SDLTM (copia, requiere Trados)** pide una memoria base y un destino nuevo. Usa solamente las unidades activas del par del documento/proyecto seleccionado. El SDK aplica reemplazo de coincidencias exactas y mezcla de campos; las otras variantes permanecen en el proyecto, aunque el resultado de `Overwrite` en SDLTM no es una exportación de todas las alternativas. El original permanece intacto. Para volver atrás basta seguir usando el archivo original. No se redistribuyen DLL RWS ni se actualiza SDLTM mediante SQL propio.
 
 ## Correcciones y deshacer
 

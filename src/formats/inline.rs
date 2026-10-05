@@ -47,6 +47,7 @@ impl Fragment {
             .flat_map(|fragment| &fragment.codes)
             .map(|code| (code.key.as_str(), code.id))
             .collect();
+        let mut next_id = reference_ids.values().copied().max().unwrap_or(0) + 1;
         loop {
             cancel.check()?;
             let before = reader.buffer_position() as usize;
@@ -132,12 +133,16 @@ impl Fragment {
                     }
                     *occurrence += 1;
                     let key = format!("{key}:{}", *occurrence);
-                    let id = if reference.is_some() {
-                        *reference_ids.get(key.as_str()).ok_or_else(|| {
-                            invalid("el destino contiene códigos inline ausentes del origen")
-                        })?
+                    let id = if let Some(id) = reference_ids.get(key.as_str()) {
+                        *id
+                    } else if reference.is_some() && dialect == Dialect::Xliff {
+                        return Err(invalid(
+                            "el destino contiene códigos inline ausentes del origen",
+                        ));
                     } else {
-                        fragment.codes.len() + 1
+                        let id = next_id;
+                        next_id += 1;
+                        id
                     };
                     let container = group && matches!(event, Event::Start(_));
                     let pair_group = pair_open && dialect == Dialect::Tmx;
@@ -205,7 +210,7 @@ impl Fragment {
         if !groups.is_empty() {
             return Err(invalid("grupo inline incompleto"));
         }
-        if reference.is_none() {
+        if reference.is_none() || dialect == Dialect::Tmx {
             fragment.render(&fragment.view, &fragment)?;
         }
         Ok(fragment)

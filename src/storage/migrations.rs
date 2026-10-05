@@ -54,7 +54,7 @@ pub(super) fn integrity(connection: &Connection) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn backup(
+pub(crate) fn backup(
     connection: &Connection,
     parent: &Path,
     prefix: &str,

@@ -1,6 +1,7 @@
 //! Adaptadores conservadores: el envelope original se conserva y solo cambia el target.
 pub mod docx;
 pub(crate) mod inline;
+pub mod sdltm;
 
 use crate::model::*;
 use quick_xml::{Reader, Writer, events::Event};
@@ -773,6 +774,33 @@ pub fn import_tmx<R: BufRead>(
     Ok(count)
 }
 
+pub fn import_memory(
+    path: &Path,
+    source_lang: &str,
+    target_lang: &str,
+    cancel: &Cancellation,
+    sink: impl FnMut(TmUnit) -> Result<()>,
+) -> Result<usize> {
+    match path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("sdltm") => sdltm::import(path, source_lang, target_lang, cancel, sink),
+        Some("tmx") => import_tmx(
+            std::io::BufReader::new(fs::File::open(path)?),
+            source_lang,
+            target_lang,
+            cancel,
+            sink,
+        ),
+        _ => Err(invalid(
+            "memoria no soportada; usa TMX o SDLTM con Trados instalado",
+        )),
+    }
+}
+
 fn parse_tu(
     raw: &str,
     source_lang: &str,
@@ -884,7 +912,7 @@ fn parse_tu(
     if let Some((source, target)) = source.zip(target) {
         let source = inline::Fragment::parse_tmx(&source, None, cancel)?;
         let target = inline::Fragment::parse_tmx(&target, Some(&source), cancel)?;
-        source.render(&target.view, &target)?;
+        target.render(&target.view, &target)?;
         Ok(Some(TmUnit {
             source: source.view,
             target: target.view,

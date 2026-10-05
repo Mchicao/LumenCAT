@@ -661,9 +661,9 @@ impl LumenCatApp {
             FileSection::Open => content
                 .child(self.file_action(Command::OpenProject, "Continúa un proyecto local de LumenCAT.", "Ctrl+O", entity.clone()))
                 .child(self.file_action(Command::ImportDocument, "Añade un DOCX, XLIFF 1.2 o TXT al proyecto abierto.", "", entity.clone()))
-                .child(self.file_action(Command::ImportMemory, "Importa TMX o SDLTM; SDLTM requiere Trados instalado y usa una copia privada.", "", entity.clone()))
+                .child(self.file_action(Command::ImportMemory, "Importa TMX o SDLTM; la SDLTM se lee en modo de solo lectura (actualizar exige Trados).", "", entity.clone()))
                 .child(div().mt_4().max_w(px(650.)).text_sm().text_color(Theme::text_secondary()).child(
-                    "No se abren paquetes Trados ni SDLXLIFF. SDLTM se importa desde Avanzado con Trados instalado. Para importar documentos o memorias, primero abre o crea un proyecto.",
+                    "No se abren paquetes Trados ni SDLXLIFF. SDLTM se importa desde Avanzado; sin Trados se lee en modo de solo lectura. Para importar documentos o memorias, primero abre o crea un proyecto.",
                 )),
             FileSection::New => content
                 .child(self.file_action(Command::NewProject, "Elige dónde guardar el nuevo proyecto local.", "Ctrl+N", entity.clone()))

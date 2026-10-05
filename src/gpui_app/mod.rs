@@ -785,7 +785,7 @@ impl LumenCatApp {
         self.native_dialog_open = true;
         let path = rfd::FileDialog::new()
             .add_filter("TMX Translation Memory", &["tmx"])
-            .add_filter("SDLTM — requiere Trados Studio instalado", &["sdltm"])
+            .add_filter("SDLTM — memoria de Trados Studio", &["sdltm"])
             .pick_file();
         self.native_dialog_open = false;
         if let Some(path) = path {
@@ -796,8 +796,7 @@ impl LumenCatApp {
                 PendingOp::Operation,
             ) {
                 self.cancellations.insert(self.next_id, cancel);
-                self.message =
-                    "Importando memoria; SDLTM usa una copia y requiere Trados instalado...".into();
+                self.message = "Importando memoria; SDLTM se lee en modo de solo lectura...".into();
             }
         }
     }

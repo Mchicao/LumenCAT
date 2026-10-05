@@ -2,6 +2,7 @@
 pub mod docx;
 pub(crate) mod inline;
 pub mod sdltm;
+pub mod sdltm_native;
 mod segmented;
 mod tmx_encoding;
 
@@ -927,7 +928,13 @@ pub fn import_memory(
         .map(str::to_ascii_lowercase)
         .as_deref()
     {
-        Some("sdltm") => sdltm::import(path, source_lang, target_lang, cancel, sink),
+        Some("sdltm") => {
+            if sdltm::available() {
+                sdltm::import(path, source_lang, target_lang, cancel, sink)
+            } else {
+                sdltm_native::import(path, source_lang, target_lang, cancel, sink)
+            }
+        }
         Some("tmx") => import_tmx(
             std::io::BufReader::new(fs::File::open(path)?),
             source_lang,
@@ -935,9 +942,7 @@ pub fn import_memory(
             cancel,
             sink,
         ),
-        _ => Err(invalid(
-            "memoria no soportada; usa TMX o SDLTM con Trados instalado",
-        )),
+        _ => Err(invalid("memoria no soportada; usa TMX o SDLTM")),
     }
 }
 

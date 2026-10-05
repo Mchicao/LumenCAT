@@ -397,6 +397,11 @@ impl ProjectStore {
             crate::editing::parts(&before.source)
                 .iter()
                 .any(|(_, tag)| *tag)
+        } else if format == "xliff12" {
+            formats::inline::validate_target(&before.source, &command.target)?;
+            crate::editing::parts(&before.source)
+                .iter()
+                .any(|(_, tag)| *tag)
         } else {
             false
         };

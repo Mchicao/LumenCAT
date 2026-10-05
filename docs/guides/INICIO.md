@@ -36,7 +36,7 @@ CR/LF/TAB no se convierten silenciosamente a espacios en Word: export rechazado.
 
 ## Límites y recuperación
 
-TXT UTF-8, líneas como segmentos y terminadores preservados; XLIFF 1.2 textual sin códigos inline ni seg-source; SDLXLIFF/paquetes no soportados. TMX textual: códigos inline rechazados; metadata TU y variantes originales conservadas, header de export generado por LumenCAT (header original completo aún no almacenado). Idiomas y textos raw no normalizados al guardar, NFC solo auxiliar.
+TXT UTF-8, líneas como segmentos y terminadores preservados. XLIFF 1.2 admite grupos anidados `g`/`mrk` y códigos `x`, `ph`, `bpt`, `ept`, `it`, `bx` y `ex`: el editor los representa como `<g id="N">`/`<x id="N"/>` y la exportación recupera sus atributos y contenido nativo. Confirmar exige conservar los códigos y el balance de grupos; exportar también verifica los pares nativos. No aprende esos segmentos en la memoria textual. `seg-source`, `sub`, extensiones inline y SDLXLIFF/paquetes siguen pendientes; construcciones ambiguas se rechazan sin aplanarlas. TMX textual: códigos inline rechazados; metadata TU y variantes originales conservadas, header de export generado por LumenCAT (header original completo aún no almacenado). Idiomas y textos raw no normalizados al guardar, NFC solo auxiliar.
 
 Límite persistido source/target 1 MiB por segmento; documentos generales 256 MiB, DOCX 128 MiB y partes 32 MiB/2048 entradas. Import/export de documentos actualmente usa buffer completo fuera UI, no streaming universal: ver benchmarks y memoria pendiente. GPUI conserva hasta 1.024 filas del grid más segmento activo; la búsqueda reúne los resultados completos. El límite de filas no equivale a un límite de RAM en bytes. TM vive en SQLite.
 

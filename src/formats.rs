@@ -1,5 +1,6 @@
 //! Adaptadores conservadores: el envelope original se conserva y solo cambia el target.
 pub mod docx;
+pub(crate) mod inline;
 
 use crate::model::*;
 use quick_xml::{Reader, Writer, events::Event};
@@ -133,7 +134,7 @@ pub fn import_document(
                 .map(|u| u.segment)
                 .collect(),
         ),
-        _ => return Err(invalid("use TXT UTF-8, XLIFF 1.2 textual o DOCX")),
+        _ => return Err(invalid("use TXT UTF-8, XLIFF 1.2 o DOCX")),
     };
     cancel.check()?;
     Ok(ImportedDocument {
@@ -179,6 +180,8 @@ fn txt_lines(text: &str) -> Vec<(&str, &str)> {
 
 struct XUnit {
     segment: ImportedSegment,
+    source_inline: inline::Fragment,
+    target_inline: inline::Fragment,
     opening: (usize, usize),
     approved: bool,
     target: Option<(usize, usize)>,
@@ -200,7 +203,7 @@ fn xliff_with_languages(
     let mut stack: Vec<Vec<u8>> = Vec::new();
     let mut units = Vec::new();
     let mut active: Option<XUnit> = None;
-    let mut field: Option<(bool, usize)> = None;
+    let mut field: Option<(bool, usize, usize)> = None;
     let mut target_start = 0;
     let mut source_seen = false;
     let mut target_seen = false;
@@ -247,9 +250,10 @@ fn xliff_with_languages(
                     return Err(invalid("XML demasiado profundo"));
                 }
                 if field.is_some() {
-                    return Err(invalid(
-                        "inline codes en source/target no soportados todavía",
-                    ));
+                    if matches!(event, Event::Start(_)) {
+                        stack.push(name);
+                    }
+                    continue;
                 }
                 if lname == b"seg-source" {
                     return Err(invalid(
@@ -291,6 +295,8 @@ fn xliff_with_languages(
                     let approved = attr(s, b"approved")?.as_deref() == Some("yes");
                     let prefix = name.strip_suffix(b"trans-unit").unwrap_or_default();
                     active = Some(XUnit {
+                        source_inline: inline::Fragment::default(),
+                        target_inline: inline::Fragment::default(),
                         segment: ImportedSegment {
                             external_id: id,
                             source: String::new(),
@@ -315,6 +321,9 @@ fn xliff_with_languages(
                     && matches!(lname, b"source" | b"target")
                 {
                     let target = lname == b"target";
+                    if target && !source_seen {
+                        return Err(invalid("target XLIFF debe aparecer después de source"));
+                    }
                     if if target { target_seen } else { source_seen } {
                         return Err(invalid("source/target duplicado"));
                     }
@@ -342,7 +351,7 @@ fn xliff_with_languages(
                         }
                     }
                     if matches!(event, Event::Start(_)) {
-                        field = Some((target, stack.len() + 1));
+                        field = Some((target, stack.len() + 1, reader.buffer_position() as usize));
                     }
                 }
                 if matches!(event, Event::Start(_)) {
@@ -353,14 +362,23 @@ fn xliff_with_languages(
                 if stack.pop().as_deref() != Some(e.name().as_ref()) {
                     return Err(invalid("XML sin balance"));
                 }
-                if let Some((target, depth)) = field
+                if let Some((target, depth, content)) = field
                     && stack.len() + 1 == depth
                 {
                     if let Some(u) = active.as_mut() {
                         if target {
                             u.target = Some((target_start, reader.buffer_position() as usize));
+                            u.target_inline = inline::Fragment::parse(
+                                &text[content..before],
+                                Some(&u.source_inline),
+                                cancel,
+                            )?;
+                            u.segment.target = u.target_inline.view.clone();
                         } else {
                             u.insertion = reader.buffer_position() as usize;
+                            u.source_inline =
+                                inline::Fragment::parse(&text[content..before], None, cancel)?;
+                            u.segment.source = u.source_inline.view.clone();
                         }
                     }
                     field = None;
@@ -379,22 +397,12 @@ fn xliff_with_languages(
             }
             Event::Eof => break,
             _ => {
-                if let Some(s) = text_event(&event)? {
-                    if let Some((target, _)) = field {
-                        if let Some(u) = active.as_mut() {
-                            let value = if target {
-                                &mut u.segment.target
-                            } else {
-                                &mut u.segment.source
-                            };
-                            value.push_str(&s);
-                            if value.len() > MAX_TEXT {
-                                return Err(invalid("segmento supera 4 MiB"));
-                            }
-                        }
-                    } else if stack.is_empty() && !s.trim().is_empty() {
-                        return Err(invalid("texto fuera del XML"));
-                    }
+                if let Some(s) = text_event(&event)?
+                    && field.is_none()
+                    && stack.is_empty()
+                    && !s.trim().is_empty()
+                {
+                    return Err(invalid("texto fuera del XML"));
                 }
             }
         }
@@ -494,7 +502,7 @@ pub fn serialize_document(
                 } else {
                     output.push_str(&format!("<{} state=\"{}\">", u.target_name, state));
                 }
-                output.push_str(&escaped(target)?);
+                output.push_str(&u.source_inline.render(target, &u.target_inline)?);
                 output.push_str(&format!("</{}>", u.target_name));
                 cursor = end;
             }

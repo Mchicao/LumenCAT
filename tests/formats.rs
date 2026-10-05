@@ -71,7 +71,6 @@ fn xml_subset_rejects_constructs_that_would_lose_structure() -> Result<()> {
     let path = dir.path().join("bad.xlf");
     for xml in [
         r#"<!DOCTYPE xliff [<!ENTITY ext SYSTEM "file:///secret">]><xliff version="1.2"/>"#,
-        r#"<xliff version="1.2"><file><body><trans-unit id="1"><source>A<g id="1">tag</g></source></trans-unit></body></file></xliff>"#,
         r#"<xliff version="1.2"><file><body><trans-unit id="1"><source>A</source><seg-source>A</seg-source></trans-unit></body></file></xliff>"#,
         r#"<xliff version="1.2"><file><body><trans-unit id="1"><source>A</source>"#,
         r#"<?xml version="1.0" encoding="ISO-8859-1"?><xliff version="1.2"/>"#,

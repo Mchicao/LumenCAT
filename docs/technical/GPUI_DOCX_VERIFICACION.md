@@ -10,7 +10,7 @@ Se incorporaron en el árbol de trabajo los cambios de código, tests y document
 - `cargo test --locked`: 26 pruebas aprobadas, cero fallos, incluidos recuperación tras terminación, rollback, revisiones y bloqueos.
 - `cargo clippy --all-targets --locked -- -D warnings`: aprobado. Cargo sigue notificando incompatibilidad futura de la dependencia `proc-macro-error2 2.0.1`.
 - `cargo fmt --all -- --check` y `git diff --check`: aprobados.
-- Build debug del binario principal: aprobada. Lanzamiento real GPUI predeterminado y egui con `--legacy-egui`: verificados; no se afirma una nueva build release.
+- Build debug del binario principal y lanzamiento real GPUI: verificados; no se afirma una nueva build release.
 
 ## Comportamiento observado
 
@@ -49,8 +49,8 @@ El soporte de marcadores de párrafo se añadió conservando sus anclajes y XML.
 
 - `output/verification/gpui-table-es.docx`: exportado con el botón de GPUI. Sus textos son `Arriba`, `Superior izquierda`, `Superior derecha`, `Inferior izquierda`, `Inferior derecha`, `Debajo`. Se verificó una tabla conservada y bytes idénticos de todas las partes diferentes de `word/document.xml`.
 - El DOCX fuente permanece idéntico al BLOB original almacenado durante la importación.
-- Capturas: `gpui-final.png`, `gpui-docx-complete.png`, `gpui-tm-applied.png`, `gpui-scroll-151.png`, `gpui-unicode.png`, `legacy-egui.png`.
+- Capturas GPUI: `gpui-final.png`, `gpui-docx-complete.png`, `gpui-tm-applied.png`, `gpui-scroll-151.png`, `gpui-unicode.png`.
 - Logs: `logs/tests/final.txt`, `logs/tests/clippy.txt`, `logs/tests/real-docx.txt`.
 - Verificador reproducible: `cargo run --locked --example verify_docx -- <directorio_nuevo_con_muestras_docx>`. Usa un directorio nuevo: el exportador protege destinos existentes. El script usa el importador, ProjectStore, edición, exportador y reimportador de la app; verifica fuentes y partes ajenas.
 
-Opcional: actualizar el contexto de diseño con `impeccable init`. `docs/PRODUCT.md` todavía describe egui y conserva el esquema antiguo de la skill; este trabajo no reescribió ese contexto.
+Este registro describe la corrida del 30 de septiembre, no el estado vigente de diseño ni una nueva certificación de Word. El contexto actual está en `docs/PRODUCT.md`.

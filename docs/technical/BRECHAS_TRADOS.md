@@ -9,8 +9,8 @@ Actualización del mismo día: implementación autorizada por entregas, con publ
 | Paquete/corte | Estado y alcance |
 |---|---|
 | F00.1/F00.2 | PASS del núcleo: backup SQLite cancelable sin sobrescritura, recuperación a copia nueva, migración v1→v2 con respaldo e historial agrupado durable. `cargo test --locked --tests`: 33 pruebas; `cargo fmt --check` y Clippy all-targets sin errores. UI de respaldo/recuperación pendiente. |
-| F01.1 | PASS del núcleo: idiomas persistidos y validación de conflicto XLIFF; controles GPUI y legacy integrados. `cargo test --locked --tests`: 35 pruebas. Ventana GPUI aislada inspeccionada; recorrido interactivo pendiente porque el transporte de teclado background rechazó `Zed::Window` y no se autorizó tomar el foco. |
-| F02.1/F02.2 | PASS del núcleo: colecciones, lectura/escritura, selección/desactivación de aprendizaje y confirmación transaccional; correcciones suspenden contribuciones y undo/redo restaura actividad. Esquema v4 con backup desde v1/v2/v3. 41 pruebas, Clippy all-targets y build debug de ambas interfaces. Integración GPUI/legacy hecha; interacción física pendiente. Prioridades, penalizaciones, códigos aprendidos y procedencias agregadas pendientes. |
+| F01.1 | PASS del núcleo: idiomas persistidos y validación de conflicto XLIFF; controles GPUI integrados. `cargo test --locked --tests`: 35 pruebas. Ventana GPUI aislada inspeccionada; recorrido interactivo pendiente porque el transporte de teclado background rechazó `Zed::Window` y no se autorizó tomar el foco. |
+| F02.1/F02.2 | PASS del núcleo: colecciones, lectura/escritura, selección/desactivación de aprendizaje y confirmación transaccional; correcciones suspenden contribuciones y undo/redo restaura actividad. Esquema v4 con backup desde v1/v2/v3. 41 pruebas, Clippy all-targets y build debug. Integración GPUI hecha; interacción física pendiente. Prioridades, penalizaciones, códigos aprendidos y procedencias agregadas pendientes. |
 | F03.1 | PASS del corte: bases activables, conceptos multilingües con variantes/estados/notas/dominio/procedencia, reconocimiento por palabras, offsets originales, QA de ausencia/prohibición y ambigüedad conservadora. Esquema v5 con respaldo desde v1–v4. 47 pruebas, Clippy y builds debug. GPUI background comprobó creación, entrada manual, reconocimiento, QA y desactivación; persistencia y comparación contra respaldo acreditan que los segmentos no cambiaron. TSV/TBX, edición avanzada, excepciones y resaltado pendientes. Ver [terminología](../guides/TERMINOLOGIA.md). |
 | F04 (validación DOCX) | Primer corte: confirmación y exportación reutilizan la validación de códigos/estructura de destino. No acredita todavía IR general de códigos ni remapeo TM. |
 | F17.1 | PASS del corte: virtualización nativa del grid (`ListState` con alturas variables tras el merge del editor Trados), páginas por viewport con overscan y caché acotada (`trim_grid_cache`). 42 pruebas, formato, Clippy y builds debug. Proyecto sintético de 100.000 segmentos abierto; selección, búsqueda del último, retorno al grid, edición, autoguardado y confirmación por botón comprobados en GPUI background; lectura SQLite posterior confirma durabilidad. Ver [evidencia y límites](GRID_VIRTUALIZADO.md). |
@@ -69,7 +69,7 @@ No hace falta copiar toda la plataforma. Cloud, colaboración centralizada y ges
 
 Convertir LumenCAT en una CAT local utilizable para encargos reales, manteniendo la autoridad del traductor, la integridad del proyecto y la fidelidad de los documentos. Se cubren las brechas anteriores sin asumir que sea necesario copiar todas las ediciones o servicios de Trados.
 
-Este plan amplía M2/M3/M4 de [MVP.md](../architecture/MVP.md); [PLAN_LUMENCAT.md](../codex/plans/PLAN_LUMENCAT.md) describe la entrega inicial y contiene información histórica. No tomar su ausencia antigua de remoto, sus conteos de tests o su interfaz egui como estado actual. Al ejecutar, actualizar las decisiones y guías afectadas por cada capacidad; no convertir una propuesta de este archivo en una capacidad implementada en `PRODUCT.md`.
+Este plan amplía M2/M3/M4 de [MVP.md](../architecture/MVP.md); [PLAN_LUMENCAT.md](../codex/plans/PLAN_LUMENCAT.md) describe la entrega inicial y contiene información histórica. No tomar su ausencia antigua de remoto ni sus conteos de tests como estado actual. Al ejecutar, actualizar las decisiones y guías afectadas por cada capacidad; no convertir una propuesta de este archivo en una capacidad implementada en `PRODUCT.md`.
 
 Reglas compartidas:
 
@@ -78,7 +78,7 @@ Reglas compartidas:
 - Guardar, confirmar, aprobar, aplicar una propuesta y exportar son acciones diferentes. Una respuesta de commit acredita durabilidad; una barra de progreso no acredita aprobación ni compatibilidad de entrega.
 - Mantener las fuentes inmutables, códigos validables y el esqueleto original. Una estructura desconocida se rechaza antes de crear un proyecto parcial o un archivo aparentemente completo.
 - Las operaciones sobre varias filas requieren previsualización, revisiones esperadas, cancelación y un grupo de historial. No se confirma automáticamente lo que propone una TM, un algoritmo o un LLM.
-- Implementar GPUI como superficie principal. Cuando cambie una regla del núcleo, adaptar también `src/app.rs` si sigue habilitado `--legacy-egui`; las pantallas nuevas pueden ser exclusivas GPUI y deben declararlo. Evitar reglas contradictorias entre las dos interfaces.
+- Implementar GPUI como única interfaz, con comandos del núcleo compartidos por el editor y los paneles. No introducir frontends alternativos ni duplicar sus reglas.
 - Credenciales y preferencias de máquina permanecen fuera del proyecto portable. El núcleo funciona sin cuentas ni red. Cada llamada conectada debe responder a una acción autorizada por el traductor.
 
 ### Orden de entregas y dependencias
@@ -130,7 +130,7 @@ No construir un bus de eventos, un motor de plugins o un framework de workflows 
 
 ### F01 — Idiomas, configuración de proyecto y recursos
 
-**Dependencias:** F00. **Archivos:** `src/model.rs`, `src/storage.rs`, `src/worker.rs`, `src/gpui_app/mod.rs`; adaptar configuración legacy existente.
+**Dependencias:** F00. **Archivos:** `src/model.rs`, `src/storage.rs`, `src/worker.rs`, `src/gpui_app/mod.rs`.
 
 1. Añadir origen/destino en creación/importación GPUI en lugar de fijar `en`/`es`. Persistir valores predeterminados y permitir variantes regionales; conservar el identificador original del archivo y validar el dialecto admitido por cada formato.
 2. Para XLIFF, contrastar configuración con `source-language`/`target-language`: mostrar la discrepancia y exigir una elección explícita. No relabelar automáticamente datos ya importados ni mezclar `pt-BR` y `pt-PT` en exact matching.
@@ -141,12 +141,12 @@ No construir un bus de eventos, un motor de plugins o un framework de workflows 
 
 ### F02 — Memorias independientes y aprendizaje al confirmar
 
-**Dependencias:** F00/F01; usar F04 para segmentos con códigos. **Archivos:** `src/tm.rs`, `src/storage.rs`, `src/model.rs`, `src/worker.rs`, GPUI y `src/app.rs`.
+**Dependencias:** F00/F01; usar F04 para segmentos con códigos. **Archivos:** `src/tm.rs`, `src/storage.rs`, `src/model.rs`, `src/worker.rs` y `src/gpui_app/`.
 
 **Cambio de decisión:** la decisión 002 dice «Confirmar es humano y no escribe TM automáticamente». El nuevo flujo propuesto es confirmación humana que alimenta una memoria de escritura seleccionada; modificar ese contrato en `DECISIONES.md` cuando se implemente. Guardar un borrador continúa sin aprender.
 
 1. Añadir colecciones con nombre, par lingüístico, prioridad, penalización y modo lectura/escritura. Migrar las TU actuales a una colección «Memoria importada» sin cambiar texto ni `raw_xml`. Elegir una colección de escritura del proyecto; permitir desactivar aprendizaje.
-2. Introducir un comando de confirmación separado de `Edit`: incluye destino actual, revisión esperada y política de aprendizaje. Los handlers de GPUI y egui usan el mismo comando. No deducir la intención solo de `state=Confirmed`, porque importación, undo y bloqueo también pueden restaurar ese estado.
+2. Introducir un comando de confirmación separado de `Edit`: incluye destino actual, revisión esperada y política de aprendizaje. GPUI usa ese comando. No deducir la intención solo de `state=Confirmed`, porque importación, undo y bloqueo también pueden restaurar ese estado.
    Si hay autosave en vuelo, conservar una intención de confirmación ligada al serial del borrador y enviarla después del ack correspondiente con la revisión actualizada. No perder la confirmación por `active.saving`, confirmar otra versión ni avanzar dando éxito antes del commit; si el traductor vuelve a editar, resolver o invalidar la intención explícitamente.
 3. Confirmar guarda segmento, historial y contribución a TM en la misma transacción. Rechazar destinos vacíos y códigos estructuralmente inválidos; los avisos lingüísticos no bloquean salvo regla de perfil explícita. Si no hay memoria de escritura, confirmar sigue funcionando y el resultado informa que no hubo aprendizaje.
 4. Contribución aprendida identificada por memoria+segmento, con versiones conservadas y una versión activa. Reconfirmar texto idéntico es idempotente; corregirlo sustituye solo la contribución de ese segmento, no otras variantes ni TU importadas. La consulta agrupa duplicados equivalentes preservando procedencias.
@@ -404,7 +404,7 @@ cargo test --locked --test docx
 cargo fmt --check
 cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked
-cargo build --locked --release --bin lumencat --bin lumencat-gpui
+cargo build --locked --release --bin lumencat
 ```
 
 Para Word, usar las opciones reales de `scripts/utils/verify_word.ps1`: `-Source`, `-Translated`, `-OutputDirectory`. `verify_docx` recibe un directorio nuevo de copias; no repetir sobre uno con exportes previos como fuentes. `verify_gpui_uia.ps1` requiere PID, WindowId y carpeta de salida. `scripts/utils/validate.ps1 -Release` actualmente construye `lumencat`/`benchmark`, por lo que no sustituye una build explícita del binario GPUI. No reemplazar el EXE de uso diario durante verificación: probar un artefacto/copia aislado.
@@ -414,7 +414,7 @@ Para Word, usar las opciones reales de `scripts/utils/verify_word.ps1`: `-Source
 Dividir en cambios revisables que puedan quedar terminados sin activar toda la fase:
 
 1. **F00.1:** backup coherente + migración mínima probada sobre copias v1. Sin modificar proyectos existentes del usuario ni cambiar todavía confirmación.
-2. **F01.1:** selección/persistencia de idiomas GPUI y comprobación de conflicto con XLIFF. Adaptar legacy solo donde comparta la regla.
+2. **F01.1:** selección/persistencia de idiomas GPUI y comprobación de conflicto con XLIFF.
 3. **F00.2:** grupos de historial y resultado común de invalidación, preservando undo/redo anterior; preparar el efecto TM dentro de la misma operación.
 4. **F02.1:** colecciones de memoria + migración de las TU actuales + selección de memoria de escritura. Validar import/export antes de aprender.
 5. **F02.2:** comando de confirmación y contribución aprendida de texto plano, con deduplicación, corrección, suspensión y undo/redo. Códigos aún excluidos con aviso hasta F04.

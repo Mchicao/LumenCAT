@@ -1,4 +1,5 @@
 /.cache/
+/.atl/
 /target/
 /output/
 /logs/

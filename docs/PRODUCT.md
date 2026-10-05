@@ -4,7 +4,7 @@
 
 ## Platform
 
-Escritorio nativo en Rust con GPUI upstream fijado en el commit `8e7fbcc` (el crate conserva versión 0.2.2) como interfaz predeterminada; egui queda disponible mediante `--legacy-egui`. Windows es la plataforma comprobada. No es una aplicación web ni móvil; la portabilidad a otros sistemas no está validada.
+Escritorio nativo en Rust con GPUI Kit 0.7.1 y su motor compatible `gpui-pre` 0.3.8 como única interfaz, distribuida en `lumencat.exe`. Windows es la plataforma de verificación; esta actualización del motor requiere su propio recorrido. No es una aplicación web ni móvil; la portabilidad a otros sistemas no está validada.
 
 ## Users
 
@@ -37,12 +37,13 @@ La edición, persistencia y asistencia local actual funcionan offline, sin cuent
 - Memoria TMX textual local, coincidencias y concordancia; aplicación humana explícita de sugerencias y avisos QA.
 - Idiomas de importación configurables y persistidos; conflicto lingüístico XLIFF rechazado. Colecciones TM internas, selección de escritura y aprendizaje de texto plano al confirmar, con suspensión al corregir y undo/redo de sus efectos. Ver [memorias](guides/MEMORIAS.md).
 - Terminología local: bases activables, conceptos con expresiones por idioma y estados preferido/permitido/prohibido. GPUI permite añadir un par manualmente; reconocimiento y QA consultan las bases compatibles. El núcleo conserva variantes, notas, dominio y procedencia. Ver [alcance y límites](guides/TERMINOLOGIA.md).
-- Importación y exportación TXT UTF-8, XLIFF 1.2 textual y un subconjunto conservador de DOCX. Word admite párrafos, celdas y tablas simples; los runs deben compartir formato inline. La exportación preserva las otras partes del paquete.
+- Importación y exportación TXT UTF-8, XLIFF 1.2 textual y un subconjunto conservador de DOCX. Word admite párrafos, celdas y tablas; las fronteras de formato y las imágenes inline admitidas se representan con códigos protegidos. La exportación preserva las otras partes del paquete.
+- Cinta de comandos con Archivo, Inicio, Revisión, Avanzado, Ver, Complementos y Configuración. Apariencia local clara/oscura y tres temas; no hay un sistema de plugins. Ver [cinta y temas](technical/CINTA_TEMAS_20261005.md).
 
 ### Límites actuales
 
-- Se rechazan DOCX con texto en gráficos, SmartArt, cuadros de texto e historias secundarias, así como formato mixto y otras estructuras no soportadas. No se promete compatibilidad universal Word ni paridad visual con Microsoft Word.
-- Los badges de tags del editor no amplían el soporte de códigos inline de los importadores XLIFF/TMX ni el formato mixto de Word.
+- Se rechazan DOCX con texto en gráficos, SmartArt, cuadros de texto e historias secundarias y otras estructuras no soportadas. No se promete compatibilidad universal Word ni paridad visual con Microsoft Word.
+- Los badges de tags del editor no amplían el soporte de códigos inline de los importadores XLIFF/TMX. El soporte DOCX depende de los códigos/estructuras admitidos por su adaptador, no de la apariencia del editor.
 - El grid GPUI usa virtualización nativa y hasta 1.024 filas en caché, además del segmento activo. La búsqueda aún reúne resultados completos. Se comprobó apertura y edición del último segmento de un corpus sintético de 100.000 filas; no hay métricas p50/p95 ni escala garantizada para corpus reales. Ver [evidencia](technical/GRID_VIRTUALIZADO.md).
 - El progreso mide destinos no vacíos, no confirmación ni QA aprobada. El porcentaje TM aplicado es metadata de sesión.
 - La selección parcial por ratón y la navegación del cursor por clic siguen pendientes. Los proyectos nuevos empiezan en→es y permiten configurar otro par para próximas importaciones; esto no relabela documentos existentes.

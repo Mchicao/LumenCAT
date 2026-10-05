@@ -1,10 +1,10 @@
 ---
 name: verify-lumencat
-description: "Trigger: verificar LumenCAT, E2E, GPUI o legacy. Conduce la app de escritorio aislada y conserva acciones, capturas y resultados reales."
+description: "Trigger: verificar LumenCAT, E2E o GPUI. Conduce la app de escritorio aislada y conserva acciones, capturas y resultados reales."
 license: Apache-2.0
 metadata:
   author: "Mchicao"
-  version: "1.1"
+  version: "1.3"
 ---
 
 ## Activation Contract
@@ -24,8 +24,7 @@ Activa esta skill para verificar comportamiento implementado de LumenCAT, reprod
 
 | Superficie | Ruta |
 |---|---|
-| GPUI principal | Controlador, `-Surface gpui` |
-| egui secundaria | Ejecución distinta, `-Surface legacy` |
+| GPUI | Controlador, sin selección de interfaz |
 | Backup/migraciones sin UI | Pruebas de núcleo; etiqueta ese nivel, no inventes botones |
 | Función pendiente o frontera pagada | Registra pendiente/bloqueada; no implementes ni consumas red como efecto lateral |
 
@@ -34,6 +33,10 @@ Activa esta skill para verificar comportamiento implementado de LumenCAT, reprod
 ### Launch
 
 Desde la raíz, ejecuta `cargo build --locked --bin lumencat`. Luego `pwsh -NoProfile -File scripts/utils/control_lumencat.ps1 -Action launch -RunId e2e-001 -WaitSeconds 900`. El controlador crea corpus sintético y proyecto vacío nuevos, abre mediante Cua y devuelve PID/ventana/hash/rutas. Lee `*-ready.png`: exige proyecto abierto antes de actuar.
+
+Para verificar el artefacto distribuido, compila con `cargo build --locked --release --bin lumencat` y añade `-Configuration release` a launch. Las acciones posteriores usan el ejecutable fijado en el manifiesto, no otra build.
+
+El controlador añade `--settings-dir output/verification/<RunId>/settings`: las pruebas de apariencia no escriben las preferencias personales de la app. La build debe admitir este parámetro antes de acreditar aislamiento de ajustes.
 
 ### Doctor
 
@@ -45,7 +48,7 @@ Lee [el mapa](features/README.md) y la receta. Usa `-Action snapshot`, después 
 
 `type` inserta en el caret; no reemplaza contenido existente. Para sustituir un campo completo (idiomas, consulta, destino o formulario), ejecuta `pwsh -NoProfile -File .cursor/skills/verify-lumencat/scripts/set-field.ps1 -RunId e2e-001 -Label 'Idioma de origen' -Value fr -WaitSeconds 900`. El helper usa doctor y snapshots del controlador, UIA SetValue y lectura exacta posterior; admite `-WindowId` para diálogos del mismo PID. No acredita teclado físico ni clipboard. Tras una acción fallida repite doctor; si la UI sigue atascada, restablece un estado conocido o cierra y reabre la instancia propia.
 
-El editor GPUI es una cuadrícula Trados: cada fila es `# | origen | destino | barra de estado`. La fila activa contiene el editor de destino dentro del grid (`target-editor`, etiqueta UIA «Destino») y su origen lee «Origen del segmento activo» (`active-source`). Las filas inactivas exponen celdas «Origen»/«Destino»/«Estado» de solo lectura. La barra de estado lateral: rojo sin destino, ámbar borrador, verde confirmado, gris bloqueado.
+El editor GPUI es una cuadrícula Trados: cada fila es `# | origen | estado | destino`. La fila activa contiene el editor de destino dentro del grid (`target-editor`, etiqueta UIA «Destino») y su origen lee «Origen del segmento activo» (`active-source`). Las filas inactivas exponen celdas «Origen»/«Destino»/«Estado» de solo lectura. La barra de estado entre origen y destino: rojo sin destino, ámbar borrador, verde confirmado, gris bloqueado. El botón visible «Confirmar» conserva la etiqueta accesible «Confirmar y avanzar» y la acción Ctrl+Enter.
 
 ### Evidence
 

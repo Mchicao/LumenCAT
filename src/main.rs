@@ -1,8 +1,6 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
-mod app;
-
-fn main() -> eframe::Result {
+fn main() {
     let log_root = std::env::var_os("LOCALAPPDATA")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(std::env::temp_dir)
@@ -20,21 +18,11 @@ fn main() -> eframe::Result {
         .windows(2)
         .find(|pair| pair[0] == "--project")
         .map(|pair| pair[1].clone());
-    if !args.iter().any(|arg| arg == "--legacy-egui") {
-        lumencat::gpui_app::runtime::run(project);
-        return Ok(());
-    }
-    let options = eframe::NativeOptions {
-        viewport: eframe::egui::ViewportBuilder::default()
-            .with_inner_size([1400.0, 900.0])
-            .with_min_inner_size([980.0, 640.0]),
-        ..Default::default()
-    };
-    eframe::run_native(
-        "LumenCAT · traducción bajo tu control",
-        options,
-        Box::new(move |cc| Ok(Box::new(app::CatApp::new(cc, project)))),
-    )
+    let settings_directory = args
+        .windows(2)
+        .find(|pair| pair[0] == "--settings-dir")
+        .map(|pair| std::path::PathBuf::from(&pair[1]));
+    lumencat::gpui_app::runtime::run(project, settings_directory);
 }
 
 fn initialize_logging(

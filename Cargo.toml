@@ -5,7 +5,6 @@ edition = "2024"
 default-run = "lumencat"
 
 [dependencies]
-eframe = { version = "=0.32.3", default-features = false, features = ["default_fonts", "glow", "x11", "wayland", "accesskit"] }
 rusqlite = { version = "=0.37.0", features = ["bundled", "backup", "hooks"] }
 quick-xml = "=0.38.3"
 unicode-normalization = "=0.1.23"
@@ -15,10 +14,11 @@ zip = { version = "=4.6.1", default-features = false, features = ["deflate-flate
 thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "json", "registry"] }
-gpui = { git = "https://github.com/zed-industries/zed", rev = "8e7fbcc131ec0f41cc4e78fbc8c50ef41f47b382", version = "=0.2.2" }
-gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "8e7fbcc131ec0f41cc4e78fbc8c50ef41f47b382" }
+gpui = { package = "gpui-kit", version = "=0.7.1" }
 async-channel = "2.5.0"
 rfd = "0.17.2"
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
 
 [profile.release]
 lto = "thin"

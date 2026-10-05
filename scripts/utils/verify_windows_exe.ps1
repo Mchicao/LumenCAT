@@ -1,5 +1,5 @@
 param(
-    [string[]]$Paths = @('output/lumencat.exe', 'output/lumencat-gpui.exe')
+    [string[]]$Paths = @('output/lumencat.exe')
 )
 
 $ErrorActionPreference = 'Stop'

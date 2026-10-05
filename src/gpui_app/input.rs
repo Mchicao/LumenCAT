@@ -95,6 +95,9 @@ pub fn native_input(focus: FocusHandle, entity: Entity<LumenCatApp>) -> impl Int
 
 impl LumenCatApp {
     fn set_accessible_value(&mut self, field: InputField, value: &str) {
+        if self.exit_state != super::ExitState::Running {
+            return;
+        }
         if value.len() > 1_048_576 {
             self.message = "El texto excede el límite de 1 MiB".into();
             self.message_error = true;
@@ -172,6 +175,9 @@ impl LumenCatApp {
         text: &str,
         window: &Window,
     ) -> Option<Range<usize>> {
+        if self.exit_state != super::ExitState::Running || self.ribbon_tab.is_page() {
+            return None;
+        }
         let target = !self.search_input.focus_handle.is_focused(window)
             && !self.replacement_input.focus_handle.is_focused(window)
             && !self.source_language_input.focus_handle.is_focused(window)

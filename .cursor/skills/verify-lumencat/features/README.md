@@ -7,6 +7,7 @@ Lee [la skill](../SKILL.md), ejecuta launch/doctor y elige la receta. Este mapa 
 | Área | Receta | Superficie y prueba |
 |---|---|---|
 | Proyectos, idiomas, documentos | [project](project.md) | GPUI, selección e importación desde diálogo |
+| Cinta, Archivo, paneles y apariencia | [ribbon](ribbon.md) | GPUI, comandos reales y temas persistidos |
 | Editor, navegación, confirmación, locks, historial | [editor](editor.md) | GPUI, guardado y reapertura |
 | Búsqueda, reemplazo, concordancia | [search](search.md) | GPUI, resultados y undo agrupado |
 | QA textual | [qa](qa.md) | GPUI, incidencias del segmento activo |
@@ -16,7 +17,6 @@ Lee [la skill](../SKILL.md), ejecuta launch/doctor y elige la receta. Este mapa 
 | TMX, exact/fuzzy, concordancia | [memories](memories.md) | GPUI, import/export y aplicación de coincidencias |
 | Terminología | [terminology](terminology.md) | GPUI: bases, conceptos, reconocimiento y QA; TBX fuera del corte |
 | Cierre, interrupción, respaldo, migración | [recovery](recovery.md) | GUI donde existe; API/proceso para resto |
-| Interfaz egui mantenida | [legacy](legacy.md) | Recorrido separado de GPUI |
 
 ## Precondiciones comunes
 

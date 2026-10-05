@@ -2,7 +2,7 @@
 
 ## 001 — Núcleo único nativo
 
-Un paquete Rust, biblioteca + binario egui/eframe. Módulos `model`, `storage`, `formats`, `tm`, `qa`, `worker`, `app`. No dividir crates sin frontera real. SQLite bundled/WAL/FULL para estado; no servidor, cuenta ni red. Eframe 0.32.3 inicialmente (versión conocida en el entorno, API inspeccionada), renderer glow mínimo; wgpu/eframe reciente se evaluará con medidas, no por moda. Electron/Tauri/WebView/JVM quedan descartados por requisitos explícitos. Winit directo agrega mantenimiento sin evidencia de beneficio.
+Un paquete Rust, biblioteca + un único ejecutable de escritorio `lumencat` con GPUI. Módulos `model`, `storage`, `formats`, `tm`, `qa`, `worker`, `gpui_app`. No dividir crates sin frontera real. SQLite bundled/WAL/FULL para estado; no servidor, cuenta ni red. GPUI y su backend nativo gobiernan render y ciclo de vida; no mantener una segunda interfaz ni un lanzador duplicado. Electron/Tauri/WebView/JVM quedan descartados por requisitos explícitos. Winit directo agrega mantenimiento sin evidencia de beneficio.
 
 ## 002 — Durabilidad y comandos
 
@@ -30,7 +30,7 @@ Un worker de proyecto con channel bounded y try_send desde UI; cola llena preser
 
 ## Dependencias justificadas
 
-`rusqlite` evita SQLite FFI propia, bundled permite FTS5/version conocida; `quick-xml` evita parser XML casero, streaming; `unicode-normalization` NFC; `strsim` Levenshtein Unicode existente; `tempfile` escritura exclusiva/commit sin clobber; `thiserror` errores tipados; `tracing` + subscriber logging estructurado sin contenido; `eframe` GUI y ciclo de vida nativo. Std threads/channels/archivos cubre el resto. Versiones y lockfile fijados; no runtime Node/Python ni librerías de red. Revisar avisos y mantener lock antes de distribuir.
+`rusqlite` evita SQLite FFI propia, bundled permite FTS5/version conocida; `quick-xml` evita parser XML casero, streaming; `unicode-normalization` NFC; `strsim` Levenshtein Unicode existente; `tempfile` escritura exclusiva/commit sin clobber; `thiserror` errores tipados; `tracing` + subscriber logging estructurado sin contenido; `gpui` y `gpui_platform` GUI y ciclo de vida nativo. Std threads/channels/archivos cubre el resto. Versiones y lockfile fijados; no runtime Node/Python ni librerías de red. Revisar avisos y mantener lock antes de distribuir.
 
 ## 007 — Word adelantado por prioridad explícita del usuario
 
@@ -66,7 +66,7 @@ XLIFF textual reconoce translated/final/signed-off/approved al importar, refleja
 
 ## 012 — Terminología por conceptos, independiente de TM
 
-F03.1 introduce bases activables dentro del proyecto, conceptos con notas/dominio/procedencia y expresiones por idioma con estado preferido/permitido/prohibido y sensibilidad a mayúsculas. El schema v5 añade tres tablas sin reescribir documentos, historial ni TU; una base v4 recibe respaldo antes de migrar. Añadir un concepto es una transacción humana, no aprende TM, no edita segmentos ni confirma. La gestión inicial es GPUI; legacy comparte los avisos QA del worker.
+F03.1 introduce bases activables dentro del proyecto, conceptos con notas/dominio/procedencia y expresiones por idioma con estado preferido/permitido/prohibido y sensibilidad a mayúsculas. El schema v5 añade tres tablas sin reescribir documentos, historial ni TU; una base v4 recibe respaldo antes de migrar. Añadir un concepto es una transacción humana, no aprende TM, no edita segmentos ni confirma. GPUI administra los recursos y presenta los avisos QA del worker.
 
 Reconocimiento por secuencias de tokens Unicode alfanuméricos y marcas combinantes, NFC auxiliar y minúsculas Unicode cuando no se distingue el caso. Se conservan texto/offsets originales. Solo DOCX interpreta `<g>/<x/>` como códigos al reconocer; TXT/XLIFF textual conserva esas cadenas como texto literal. No se promete morfología ni segmentación de lenguas sin espacios.
 

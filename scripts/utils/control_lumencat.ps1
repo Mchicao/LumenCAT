@@ -1,7 +1,7 @@
 param(
     [Parameter(Mandatory)][ValidateSet('launch', 'reopen', 'doctor', 'snapshot', 'click', 'type', 'key', 'hotkey', 'cleanup')][string]$Action,
     [Parameter(Mandatory)][ValidatePattern('^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$')][string]$RunId,
-    [ValidateSet('gpui', 'legacy')][string]$Surface = 'gpui',
+    [ValidateSet('debug', 'release')][string]$Configuration = 'debug',
     [long]$WindowId = 0,
     [double]$X = -1,
     [double]$Y = -1,
@@ -114,8 +114,8 @@ if ($Action -eq 'launch') {
     Request-Lock $RunId $WaitSeconds
     try {
         if (Test-Path -LiteralPath $Directory) { throw 'RunId existente: usa otro o reopen; nunca se sobrescribe evidencia.' }
-        $Build = Join-Path $Root '.cache/target/debug/lumencat.exe'
-        if (!(Test-Path -LiteralPath $Build)) { throw 'Ejecuta cargo build --locked --bin lumencat primero.' }
+        $Build = Join-Path $Root ".cache/target/$Configuration/lumencat.exe"
+        if (!(Test-Path -LiteralPath $Build)) { throw "No existe la build $Configuration; compila lumencat antes de launch." }
         New-Item -ItemType Directory -Path $Directory | Out-Null
         $Executable = Join-Path $Directory 'lumencat.exe'
         Copy-Item -LiteralPath $Build -Destination $Executable
@@ -123,7 +123,7 @@ if ($Action -eq 'launch') {
         [IO.File]::WriteAllText((Join-Path $Directory 'sample.xlf'), '<?xml version="1.0" encoding="utf-8"?><xliff version="1.2"><file original="sample" source-language="en" target-language="es" datatype="plaintext"><body><trans-unit id="1"><source>XLIFF example.</source><target>Ejemplo XLIFF.</target></trans-unit></body></file></xliff>')
         [IO.File]::WriteAllText((Join-Path $Directory 'sample.tmx'), '<?xml version="1.0" encoding="utf-8"?><tmx version="1.4"><header creationtool="Verification" creationtoolversion="1" segtype="sentence" o-tmf="LumenCAT" adminlang="en" srclang="en" datatype="PlainText"/><body><tu><tuv xml:lang="en"><seg>Hello world</seg></tuv><tuv xml:lang="es"><seg>Hola mundo</seg></tuv></tu></body></tmx>')
         $Manifest = [pscustomobject]@{
-            runId = $RunId; surface = $Surface; executable = $Executable
+            runId = $RunId; surface = 'gpui'; executable = $Executable
             sha256 = (Get-FileHash -LiteralPath $Executable -Algorithm SHA256).Hash
             project = (Join-Path $Directory 'project.lcat'); pid = 0; windowId = 0
             startedUtc = ''; closedUtc = $null
@@ -144,8 +144,7 @@ if ($Action -in @('launch', 'reopen')) {
         if (!(Test-Path -LiteralPath $Manifest.project)) { throw 'No existe proyecto para reabrir.' }
         if ((Get-FileHash -LiteralPath $Manifest.executable -Algorithm SHA256).Hash -ne $Manifest.sha256) { throw 'La build cambió; crea una ejecución nueva.' }
     }
-    $Arguments = @('--project', $Manifest.project)
-    if ($Manifest.surface -eq 'legacy') { $Arguments += '--legacy-egui' }
+    $Arguments = @('--project', $Manifest.project, '--settings-dir', (Join-Path $Directory 'settings'))
     $Stamp = Get-Date -Format 'yyyyMMdd-HHmmss-ffff'
     $Launch = Invoke-Driver 'launch_app' @{
         path = $Manifest.executable; additional_arguments = $Arguments
@@ -185,6 +184,16 @@ if ($Action -eq 'cleanup') {
                 pid = $Doctor.pid; window_id = $Doctor.windowId
                 element_token = $Close[0].element_token; delivery_mode = 'background'
             } (Join-Path $Directory "$Stamp-close.json") | Out-Null
+        }
+        if (Get-OwnedProcess $Manifest) {
+            $Confirmation = Save-Snapshot $Doctor "$Stamp-close-confirmation"
+            $SaveAndExit = @($Confirmation.elements | Where-Object { $_.role -eq 'Button' -and $_.label -eq 'Guardar y salir' -and $_.enabled -ne $false })
+            if ($SaveAndExit.Count -eq 1) {
+                Invoke-Driver 'click' @{
+                    pid = $Doctor.pid; window_id = $Doctor.windowId
+                    element_token = $SaveAndExit[0].element_token; delivery_mode = 'background'
+                } (Join-Path $Directory "$Stamp-save-and-exit.json") | Out-Null
+            }
             $Process.WaitForExit(10000) | Out-Null
         }
         if (Get-OwnedProcess $Manifest) {
@@ -229,7 +238,12 @@ try {
     $Result | ConvertTo-Json -Depth 16
 } finally {
     $Windows = Invoke-Driver 'list_windows' @{ pid = $Manifest.pid } ''
-    if (!@($Windows.windows | Where-Object window_id -eq $Doctor.windowId).Count) { $Doctor.windowId = $Manifest.windowId }
-    Save-Snapshot $Doctor "$Stamp-after-$Action" | Out-Null
+    if (Get-OwnedProcess $Manifest) {
+        if (!@($Windows.windows | Where-Object window_id -eq $Doctor.windowId).Count) { $Doctor.windowId = $Manifest.windowId }
+        Save-Snapshot $Doctor "$Stamp-after-$Action" | Out-Null
+    } else {
+        @{ processExited = $true; pid = $Manifest.pid; windows = $Windows.windows } |
+            ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $Directory "$Stamp-after-$Action.json") -Encoding utf8
+    }
     Write-Lock $RunId
 }

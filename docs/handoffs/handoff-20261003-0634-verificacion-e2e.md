@@ -1,5 +1,7 @@
 # Handoff: cobertura E2E completa de LumenCAT
 
+Registro histórico cerrado. Para trabajo actual usa la skill local y `docs/technical/VERIFICACION_E2E.md`; no retomes las instrucciones de este punto de parada.
+
 **Ubicación del handoff:** `C:/Proyectos/LumenCAT/docs/handoffs/`. El trabajo y los artefactos descritos siguen en el worktree `C:/Users/matia/AppData/Local/Temp/opencode/lumencat-trados`; las rutas relativas de este documento se refieren a ese worktree. No se copiaron ni sincronizaron cambios de código al checkout principal.
 
 ## Encargo y punto de parada
@@ -24,7 +26,6 @@ Después pidió detener esta ejecución y preparar este handoff para otro agente
 | `features/README.md` y `references/coverage.md` dentro de la skill | Índice y niveles de evidencia escritos |
 | `features/project.md`, `editor.md`, `search.md`, `qa.md`, `input.md`, `grid.md` | Creados por Luna; revisar instrucciones transitorias y resultados por subfunción |
 | `features/formats.md`, `memories.md`, `terminology.md`, `recovery.md` | GLM dejó archivos parciales antes de la cancelación; revisar contenido |
-| `features/legacy.md` | **Falta**; el índice ya lo referencia |
 | `scripts/utils/control_lumencat.ps1` | Launch/doctor/snapshot y acciones GUI; persiste evidencia; cleanup tiene fallo pendiente |
 | `docs/technical/VERIFICACION_E2E.md` | Registro preliminar, no declaración de cobertura total |
 
@@ -47,7 +48,7 @@ Para continuar una sesión: `opencode run --standalone -m '<provider/model#high>
 
 ## Evidencia realmente obtenida
 
-- `cargo build --locked --bin lumencat --bin lumencat-gpui`: aprobado antes de esta pasada GUI. Advertencia preexistente `proc-macro-error2 v2.0.1`.
+- `cargo build --locked --bin lumencat`: aprobado antes de esta pasada GUI. Advertencia preexistente `proc-macro-error2 v2.0.1`.
 - Parser PowerShell del controlador: aprobado tras las modificaciones.
 - Luna: `cargo test --locked --test qa --test replacement --test search_cancel` (3 pruebas); dos checks unitarios focalizados del grid/Unicode (2 pruebas). Logs `logs/tests/luna-core.log`, `luna-unit.log`. **No sustituyen E2E GUI.**
 - `output/verification/e2e-20261003-gpui`: primer launch, ajuste de doctor Windows y cierre normal; evidencia preservada.
@@ -75,8 +76,8 @@ Repro propuesta: fila `Hello world`, destino `x`, confirmar, volver a la fila y 
 ## Plan de continuación y aceptación
 
 1. **Recuperar control seguro:** inspeccionar estado Git, agentes cancelados y manifiestos; resolver/cerrar solamente la instancia temporal pendiente, conservar evidencia. Probar launch-copy/doctor/cleanup con RunId nuevo y una feature real.
-2. **Cerrar inventario:** contrastar `src/gpui_app/`, `src/app.rs`, `worker::Task`, parsers, storage y guías. Completar `legacy.md`, revisar recetas parciales, reparar links y quitar frases como «el coordinador posee la ventana» de recetas permanentes. Separar features futuras de actuales.
-3. **Delegar con propiedad disjunta:** Luna: editor/búsqueda/QA/input/grid y repro/fix QA; GLM: formatos/TM/terminología/recuperación/legacy. Un PID/proyecto por agente; asignar cualquier fix de `src` explícitamente para evitar colisiones. Pueden reutilizar sesiones y contratos existentes.
+2. **Cerrar inventario:** contrastar `src/gpui_app/`, `worker::Task`, parsers, storage y guías. Revisar recetas parciales, reparar links y quitar frases como «el coordinador posee la ventana» de recetas permanentes. Separar features futuras de actuales.
+3. **Delegar con propiedad disjunta:** Luna: editor/búsqueda/QA/input/grid y repro/fix QA; GLM: formatos/TM/terminología/recuperación. Un PID/proyecto por agente; asignar cualquier fix de `src` explícitamente para evitar colisiones. Pueden reutilizar sesiones y contratos existentes.
 4. **Ejecutar todo el mapa:** registrar cada ID con `GUI PASS`, `CORE PASS`, `FAIL`, `BLOCKED` o `NOT RUN`. Probar acciones humanas, resultados visibles, exportaciones reales, fuentes intactas, persistencia/undo/TM juntos. Backup/migraciones sin UI se prueban por API/proceso y se etiquetan CORE, nunca GUI. Hotkeys rechazadas por `Zed::Window` quedan BLOCKED sin foreground.
 5. **Corregir solo bugs reproducidos y verificar:** actualizar recetas y `docs/technical/VERIFICACION_E2E.md`; ejecutar fmt, Clippy all-targets, tests y builds locked del scope. Confirmar que cleanup conserva pruebas y no deja procesos. Actualizar memoria duradera y registro de skills si corresponde.
 

@@ -20,7 +20,7 @@ Repo nuevo `C:/Proyectos/LumenCAT`. Un paquete Rust con `src/`, `tests/`, docume
 
 ## Plan of Work
 
-Leer INVESTIGACION/MVP/DECISIONES. Definir tipos compartidos primero. Implementar parsers/serializadores y storage en paralelo con ownership exclusivo. Integrar worker de DB y UI egui. Ejecutar workflow de import/edit/undo/recovery/export con tests de integración; benchmarking independiente. Revisar con GLM en modo lectura.
+Leer INVESTIGACION/MVP/DECISIONES. Definir tipos compartidos primero. Implementar parsers/serializadores y storage en paralelo con ownership exclusivo. Integrar worker de DB y UI GPUI. Ejecutar workflow de import/edit/undo/recovery/export con tests de integración; benchmarking independiente. Revisar con GLM en modo lectura.
 
 ## Concrete Steps
 
@@ -36,7 +36,7 @@ No sobrescribir outputs ni inputs. Operaciones canceladas hacen rollback; no bor
 
 ## Interfaces and Dependencies
 
-Un paquete, módulos model/formats/storage/tm/qa/worker/app. Contratos detallados en DECISIONES. Std concurrencia; SQLite, quick-xml, egui y dependencias enfocadas, lockfile fijado.
+Un paquete, módulos model/formats/storage/tm/qa/worker/gpui_app. Contratos detallados en DECISIONES. Std concurrencia; SQLite, quick-xml, GPUI y dependencias enfocadas, lockfile fijado.
 
 ## Surprises & Discoveries
 

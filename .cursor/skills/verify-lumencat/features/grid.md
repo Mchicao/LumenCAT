@@ -8,7 +8,7 @@
 
 ## How to get to it (user POV)
 
-Importa un documento y selecciónalo en **Documentos**: la tabla central representa sus segmentos con número, origen, destino y estado; `source.txt` produce 5 filas. La activa contiene el editor inline y «Origen del segmento activo». Estado UIA: `confirmado|borrador; editable|bloqueado`; la barra lateral colorea rojo/ámbar/verde/gris. En documentos grandes solo se exponen las filas del viewport, no todas las del corpus.
+Importa un documento y selecciónalo en **Documentos**: la tabla central representa sus segmentos con número, origen, destino y estado; `source.txt` produce 5 filas. La activa contiene el editor inline y «Origen del segmento activo». Estado UIA: `confirmado|borrador; editable|bloqueado`; la barra entre origen y destino colorea rojo/ámbar/verde/gris. En documentos grandes solo se exponen las filas del viewport, no todas las del corpus.
 
 Haz clic en cualquier fila: queda activa y el editor inline salta a ella. Navega con **Anterior**/**Siguiente** o Ctrl+↑/↓; el scroll del grid recorre documentos grandes con filas virtualizadas. La barra de progreso muestra destinos no vacíos (no confirmados); su botón «Ir al primer segmento pendiente» lleva al primer segmento sin destino que esté cargado en caché. En búsqueda el grid cambia a coincidencias; «Limpiar» o Esc regresa al grid del documento.
 

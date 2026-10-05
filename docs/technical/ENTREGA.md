@@ -2,7 +2,7 @@
 
 ## Implementado y verificado
 
-El checkout actual está en `main` y sigue `origin/main` en `b9e188c` (`feat: initial commit LumenCAT`); los cambios de esta pasada permanecen locales y sin commit. Esta tarea no publicó cambios. Un paquete Rust con GUI egui/eframe nativa, sin servidor/Node/Python/JVM/WebView ni red. Biblioteca y ejecutable real, no scaffolding vacío.
+En esa entrega el checkout estaba en `main` y seguía `origin/main` en `b9e188c` (`feat: initial commit LumenCAT`); sus cambios permanecían locales y sin commit. Esa tarea no publicó cambios. Un paquete Rust con interfaz nativa inicial, posteriormente retirada, sin servidor/Node/Python/JVM/WebView ni red. Biblioteca y ejecutable real, no scaffolding vacío. El estado vigente usa únicamente GPUI.
 
 Proyecto SQLite WAL/FULL, historial undo/redo persistido, revisiones optimistas, locks, editor/confirmación, caché virtualizada1024 filas, TMX textual streaming/exact/fuzzy/concordancia, búsqueda paginada cancelable, QA local, TXT/XLIFF1.2 textual/DOCX conservador, exporte nuevo atómico sin clobber. IA desactivada; providers/proposals diseñados en ADR, no implementados todavía.
 

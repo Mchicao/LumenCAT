@@ -8,7 +8,7 @@ use model::Result;
 use std::{
     io::Write,
     path::PathBuf,
-    sync::mpsc::{self, Receiver, SyncSender},
+    sync::mpsc::{self, SyncSender},
     thread,
 };
 
@@ -69,43 +69,9 @@ pub struct Reply {
     pub id: u64,
     pub result: Result<Data>,
 }
-pub struct Worker {
-    pub sender: SyncSender<Request>,
-    pub receiver: Receiver<Reply>,
-}
+pub struct Worker;
 
 impl Worker {
-    pub fn start(ctx: eframe::egui::Context) -> Self {
-        let (sender, input) = mpsc::sync_channel::<Request>(16);
-        let (output, receiver) = mpsc::sync_channel(16);
-        thread::spawn(move || {
-            let mut store = None;
-            while let Ok(request) = input.recv() {
-                let started = std::time::Instant::now();
-                let result = run(&mut store, request.task);
-                if result.is_err() {
-                    tracing::warn!(event = "worker_operation_failed", request_id = request.id);
-                }
-                tracing::debug!(
-                    event = "worker_operation_completed",
-                    request_id = request.id,
-                    elapsed_us = started.elapsed().as_micros() as u64
-                );
-                if output
-                    .send(Reply {
-                        id: request.id,
-                        result,
-                    })
-                    .is_err()
-                {
-                    break;
-                }
-                ctx.request_repaint();
-            }
-        });
-        Self { sender, receiver }
-    }
-
     pub fn start_async() -> (SyncSender<Request>, async_channel::Receiver<Reply>) {
         let (sender, input) = mpsc::sync_channel::<Request>(32);
         let (output, receiver) = async_channel::bounded::<Reply>(32);

@@ -1,10 +1,10 @@
 # Computer Use en Windows
 
-La interfaz GPUI expone accesibilidad nativa mediante AccessKit/UIA. Usar el EXE release actualizado en `output/lumencat-gpui.exe`; acepta `--project C:/ruta/proyecto.lcat` y la ruta posicional anterior. El frontend egui permanece separado.
+La única interfaz GPUI expone accesibilidad nativa mediante AccessKit/UIA. El ejecutable distribuido es `output/lumencat.exe` y acepta `--project C:/ruta/proyecto.lcat`. Para verificar, usa una copia aislada gestionada por `scripts/utils/control_lumencat.ps1` y la skill local; no lances el EXE directamente desde el agente.
 
 ## Operación eficiente con cua-driver
 
-1. Lanzar con `launch_app`, guardar PID/HWND y observar `get_window_state`.
+1. Ejecutar el controlador con `-Action launch -RunId <nuevo> -WaitSeconds 900`, guardar PID/HWND y observar el snapshot inicial.
 2. Elegir el control por rol/nombre del snapshot y actuar con su `element_token`. Los AutomationId son estables, pero el token caduca al tomar otro snapshot del mismo HWND, incluso desde el CLI de verificación.
 3. Usar `Invoke`/`SelectionItem` para botones, documentos, filas y pestañas; `set_value` para escribir el campo completo. Verificar el valor y el estado desde un snapshot nuevo. La escritura del destino comparte autoguardado, historial y QA con la entrada humana.
 4. Entre capturas visuales, usar `include_screenshot:false` y `query` para consultar solo el campo o acción necesarios. `query` reduce la respuesta, no el coste de recorrer el proveedor. En diálogos nativos, `max_depth:3` evita recorrer archivos y navegación de Explorer; ante timeout puede servir profundidad 2 para el ComboBox «Nombre:», seguido de lectura del Edit a profundidad 3.

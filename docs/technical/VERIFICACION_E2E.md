@@ -1,6 +1,21 @@
 # Verificación E2E de LumenCAT
 
-Fecha de esta entrega: 3 de octubre de 2026. Superficie principal: GPUI; egui sigue mantenida mediante `--legacy-egui`.
+Registro histórico de la entrega del 3 de octubre de 2026. La única interfaz vigente es GPUI; el mapa activo ya no incluye una superficie alternativa.
+
+## Cinta y apariencia — 5 de octubre de 2026
+
+La [cinta y temas](CINTA_TEMAS_20261005.md) documenta las pestañas nuevas y sus límites. Primera pasada GUI: DOCX complejo, Archivo, nuevo/abrir proyecto, confirmación sin avanzar, QA activo, paneles y exportación con original intacto. Confirmación de la build final: importación/edición/confirmación, modos claro/oscuro, temas, Tab/Espacio y reapertura persistente. 47 pruebas sin fallos, Clippy all-targets y release aprobados; no se reacreditaron Word ni todo el teclado. Las dos builds y sus evidencias están diferenciadas; el EXE diario no se sustituyó.
+
+## Verificación de interfaz única — 4 de octubre de 2026
+
+Retirada la interfaz anterior y el lanzador de escritorio duplicado. El único binario de escritorio es `lumencat`; `benchmark` y `recovery_probe` son utilidades, no interfaces.
+
+- **CORE PASS:** `scripts/utils/validate.ps1 -Release`: formato, Clippy all-targets con `-D warnings`, 46 pruebas sin fallos y build release. Se retiró junto a la interfaz su prueba privada de reconocimiento de guardados; no se eliminó ninguna suite del núcleo. Log: `logs/tests/gpui-only-final-validation.log`.
+- **GUI PASS:** `gpui-only-20261004`, release aislada por controlador con `-Configuration release -WaitSeconds 900`: importar TXT por diálogo, escribir destino mediante UIA SetValue, confirmar y avanzar, cerrar/reabrir con texto y estado conservados, exportar TXT y comparar su contenido; SHA-256 del original intacto. Evidencia: `output/verification/gpui-only-20261004/results.md` y capturas antes/acción/después.
+- **Artefacto verificado:** `output/lumencat.exe`, subsistema Windows GUI (2), SHA-256 `8FBDA44CBD88313B378C4A60B9569691DA8BF6A02EA96622902C0BFC108D6D5C`; coincide con la release compilada y con la conducida por GUI.
+- **Límites:** este recorrido no reacredita teclado físico, clipboard/IME, Word ni Trados. Los registros antiguos corresponden a sus builds, no a esta retirada.
+
+La limpieza conserva proyectos, capturas y logs históricos y la caché Rust activa. Los EXE antiguos de verificación se retiraron como artefactos regenerables; no pueden reabrirse directamente desde sus manifiestos antiguos. Informe: `logs/tests/gpui-only-cleanup.json`. El EXE duplicado de `output/` permanece pendiente porque una instancia no creada por esta verificación lo mantiene abierto; no se cerró ni se alteró su trabajo.
 
 ## Contrato de cobertura
 
@@ -19,7 +34,7 @@ Cada receta distingue entradas, subfunciones, pasos observables y limitaciones. 
 ## Orquestación
 
 - OpenCode `openai/gpt-6-luna#high`: proyecto, editor, búsqueda, QA, entrada y grid; ejecución GUI y corrección acotada del mensaje QA.
-- OpenCode `zai-coding-plan/glm-5.3-flash#high`: formatos, memorias, terminología, recuperación y legacy; workflow compartido y verificación de recursos.
+- OpenCode `zai-coding-plan/glm-5.3-flash#high`: formatos, memorias, terminología y recuperación; workflow compartido y verificación de recursos.
 - Coordinador: controlador de instancia, integración del mapa, validación de artefactos y registro común. Archivos y ventanas asignados explícitamente para no colisionar.
 
 No se delegó producción, consumo de proveedores, proyectos del usuario, commits ni push. Los logs de agentes viven en `logs/tests/verification-*-agent.jsonl`, ignorados por Git.
@@ -48,17 +63,16 @@ Antes/acción/después se conservan bajo `output/verification/<RunId>/`. Cleanup
 - Campaña con tres agentes en paralelo (cola `output/verification/.app-lock.json`, ownership disjunto de recetas, sin toques a `src/` por parte de agentes):
   - `e2e-ed-001` — editor/grid/input/QA: 17 subfunciones GUI PASS (autoguardado, confirmar y avanzar, navegación, copiar origen, bloqueo con negativo, undo/redo, QA activo con aparición/retirada de incidencias, progreso, clipboard Unicode, persistencia/reopen). Atajos con modificador BLOCKED por transporte (degradan a «c» literal); funciones equivalentes acreditadas por botones. `results.md` + `bugs-editor.md`.
   - `e2e-fm-001/002` — proyecto/formatos y memorias/búsqueda: importaciones TXT/XLIFF/DOCX (códigos intactos, rechazo XML roto y códigos inline), exportaciones verificadas byte a byte o por zip/XML (TXT CRLF, XLIFF envelope+state, DOCX runs, TMX 1.4), noclobber, originales intactos (sha256), negativo de códigos ausentes, TMX import/apply/concordancia/export, búsqueda y reemplazo documento/segmento con undo, rechazo TMX 1.1, persistencia tras reopen. `project.language-pair`, `formats.language-conflict` y el gestor/aprendizaje de memorias quedan NOT RUN por no implementados en este checkout (existen en `origin/main`, 5 commits adelante; sin pull autorizado). `bugs-formats.md`.
-  - `e2e-rc-001/002` — legacy y recuperación: smoke egui (apertura y cierre GUI PASS; importación BLOCKED por BUG-L1/BUG-L2), flujo reopen GPUI completo GUI PASS con destino confirmado persistido, CORE recovery/storage 5/5. `terminology.md` reescrita como receta-estado (termbase NO implementada). `bugs-recovery.md`.
+  - `e2e-rc-002` — recuperación: flujo reopen GPUI completo GUI PASS con destino confirmado persistido, CORE recovery/storage 5/5. `terminology.md` quedó como receta-estado de la base entonces examinada. `bugs-recovery.md`.
 - `e2e-fix-001` — smoke del build corregido (QA identity issues, Estado en español, guard de reentrada de diálogos): importar → editar → confirmar → exportar GUI PASS con un solo diálogo y cola liberada.
-- Auditoría del mapa: 11 recetas enlazadas con los cuatro H2 obligatorios, sin archivos huérfanos; 7 corridas con `results.md`; 3 informes de bugs.
+- Auditoría histórica del mapa: 11 recetas enlazadas con los cuatro H2 obligatorios, sin archivos huérfanos; 7 corridas con `results.md`; 3 informes de bugs. El mapa vigente contiene 11 recetas tras añadir cinta/apariencia y retirar la superficie alternativa.
 
 ## Defectos y límites
 
 - CORREGIDO: mensaje QA vacío mencionaba «length anomalies» sin regla de longitud → «identity issues».
 - CORREGIDO: celda «Estado» mezclaba idiomas (`confirmed; editable` vs `draft; bloqueado`) → homogéneo en español (`confirmado/borrador; bloqueado/editable`), sin tocar `as_str()` de persistencia.
 - CORREGIDO: diálogos nativos apilables (reentrada durante el diálogo bloqueante) → guard `native_dialog_open` en los cinco diálogos; camino normal reacreditado en `e2e-fix-001`.
-- CONOCIDO, sin corregir: BUG-L1 — la superficie egui no pinta al lanzarse sin activación (ventana blanca real; UIA vivo; al maximizar swapchain obsoleto); con activación normal sí pinta. Superficie secundaria en mantenimiento; requiere tarea propia de render (glow/winit) con verificación visual.
-- Transporte (no son bugs de la app): hotkeys con modificador sobre GPUI background se degradan a caracteres literales; teclado sintético sobre egui exige foreground. `type_text` inserta en el caret: dos escrituras sobre «Nombre:» concatenan la ruta.
+- Transporte (no son bugs de la app): hotkeys con modificador sobre GPUI background se degradan a caracteres literales. `type_text` inserta en el caret: dos escrituras sobre «Nombre:» concatenan la ruta.
 - GPUI expone el grid en UIA tras el rediseño; el panel QA sigue sin exponer su contenido (solo captura).
 - El checkout está 5 commits detrás de `origin/main`; las features presentes upstream y ausentes aquí quedaron NOT RUN, no FAIL.
 
@@ -79,5 +93,4 @@ Actualiza mapa y evidencia al cambiar funcionalidades. `/maintain-verification-s
 - **Bug de flujo corregido**: elegir un resultado de búsqueda ahora limpia el filtro y muestra el editor del segmento (antes `is_searching` bloqueaba la vista).
 - **Bug de salto lejano corregido**: el segmento seleccionado se inserta en `rows` y el scroll se difiere al render (`pending_reveal`) con hint de altura; antes el editor no aparecía para segmentos fuera de las páginas cargadas.
 - **Código muerto eliminado**: variante `PendingOp::Reload` (nunca construida) y directorio `views/` vacío.
-- **BUG-L1 (egui en blanco sin activación): no reproducible** en esta build con el controlador actual (`e2e-l1-001`, captura ready con app pintada); queda como intermitente/upstream, no como defecto activo.
 - **Tests**: auditoría de las 8 suites de integración y los 3 módulos unitarios: todos son de comportamiento (persistencia, recuperación, round-trips, cancelación); no se encontraron tests tautológicos ni de baja calidad que eliminar. Suite: 0 fallos con `cargo test --locked`.

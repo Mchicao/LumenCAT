@@ -1,6 +1,8 @@
 pub mod components;
 pub use crate::editing;
+mod exit;
 mod input;
+mod ribbon;
 pub mod runtime;
 mod terminology;
 pub mod theme;
@@ -14,15 +16,17 @@ use crate::{
     worker::{Data as WorkerData, Reply, Request, Task as WorkerTask},
 };
 use components::*;
+use exit::ExitState;
 use gpui::prelude::*;
 use gpui::*;
+use ribbon::{FileSection, RibbonTab};
 use std::{
     collections::{BTreeMap, HashMap},
     path::PathBuf,
     sync::mpsc::SyncSender,
     time::{Duration, Instant},
 };
-use theme::Theme;
+use theme::{Appearance, Theme};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum RightTab {
@@ -146,11 +150,19 @@ pub struct LumenCatApp {
     pub message: String,
     pub save_error: bool,
     message_error: bool,
-    pub closing_requested: bool,
+    exit_state: ExitState,
+    exit_error: Option<String>,
     cancellations: HashMap<u64, Cancellation>,
     pub focus_handle: FocusHandle,
     show_memory_actions: bool,
     native_dialog_open: bool,
+    ribbon_tab: RibbonTab,
+    file_section: FileSection,
+    show_documents: bool,
+    show_tools: bool,
+    appearance: Appearance,
+    appearance_path: PathBuf,
+    appearance_error: Option<String>,
 }
 
 impl Focusable for LumenCatApp {
@@ -176,7 +188,21 @@ fn trim_grid_cache(rows: &mut BTreeMap<usize, Segment>, anchor: usize) {
 }
 
 impl LumenCatApp {
-    pub fn new(sender: SyncSender<Request>, project: Option<String>, cx: &mut App) -> Self {
+    pub fn new(
+        sender: SyncSender<Request>,
+        project: Option<String>,
+        appearance_path: PathBuf,
+        cx: &mut App,
+    ) -> Self {
+        let (appearance, appearance_error) = match Appearance::load(&appearance_path) {
+            Ok(appearance) => (appearance, None),
+            Err(error) => (
+                Appearance::default(),
+                Some(format!("No se pudo leer la apariencia: {error}")),
+            ),
+        };
+        Theme::apply(appearance);
+        Theme::sync_components(cx);
         let mut app = Self {
             sender,
             next_id: 0,
@@ -214,7 +240,7 @@ impl LumenCatApp {
             qa_issues: Vec::new(),
             active_tab: RightTab::TranslationMemory,
             latest_matches_req: 0,
-            search_input: InputModel::new("Search source / target...", cx),
+            search_input: InputModel::new("Buscar en origen y destino…", cx),
             replacement_input: InputModel::new("Reemplazar por...", cx),
             show_replace: false,
             document_scope: true,
@@ -229,11 +255,19 @@ impl LumenCatApp {
                 .into(),
             save_error: false,
             message_error: false,
-            closing_requested: false,
+            exit_state: ExitState::Running,
+            exit_error: None,
             cancellations: HashMap::new(),
             focus_handle: cx.focus_handle(),
             show_memory_actions: false,
             native_dialog_open: false,
+            ribbon_tab: RibbonTab::Home,
+            file_section: FileSection::Open,
+            show_documents: true,
+            show_tools: true,
+            appearance,
+            appearance_path,
+            appearance_error,
         };
 
         if !app.project_path.trim().is_empty() {
@@ -385,14 +419,8 @@ impl LumenCatApp {
         }
     }
 
-    pub fn close_when_saved(&mut self) {
-        if self.closing_requested && self.opened && !self.is_dirty() && !self.is_busy() {
-            self.send(WorkerTask::Close, PendingOp::Close);
-        }
-    }
-
     pub fn save(&mut self, force: bool) {
-        if self.save_error {
+        if self.save_error || !matches!(self.exit_state, ExitState::Running | ExitState::Saving) {
             return;
         }
         let Some(active) = &self.active_draft else {
@@ -673,13 +701,21 @@ impl LumenCatApp {
     }
 
     pub fn open_project_dialog(&mut self) {
+        self.project_dialog(false);
+    }
+
+    fn project_dialog(&mut self, create: bool) {
         if self.native_dialog_open || self.is_dirty() || self.is_busy() {
             return;
         }
         self.native_dialog_open = true;
-        let path = rfd::FileDialog::new()
-            .add_filter("LumenCAT Project", &["lcat", "db", "sqlite"])
-            .save_file();
+        let dialog =
+            rfd::FileDialog::new().add_filter("Proyecto LumenCAT", &["lcat", "db", "sqlite"]);
+        let path = if create {
+            dialog.save_file()
+        } else {
+            dialog.pick_file()
+        };
         self.native_dialog_open = false;
         if let Some(path) = path {
             self.project_path = path.to_string_lossy().to_string();
@@ -852,6 +888,12 @@ impl LumenCatApp {
                     self.confirmation_intent = None;
                 }
                 self.message = error.to_string();
+                if matches!(
+                    pending,
+                    PendingOp::Save(_) | PendingOp::Confirm(_) | PendingOp::Close
+                ) {
+                    self.fail_exit(self.message.clone());
+                }
             }
             Ok(data) => match data {
                 WorkerData::Opened(recovered, docs, settings, backup) => {
@@ -1019,7 +1061,7 @@ impl LumenCatApp {
                             }
                         }
                         .into();
-                        if advance {
+                        if advance && self.exit_state == ExitState::Running {
                             self.move_segment(1);
                         }
                         confirmed_ordinal = Some(ordinal);
@@ -1115,8 +1157,9 @@ impl LumenCatApp {
         if self.confirmation_intent.is_some() {
             self.save(true);
         }
-        self.close_when_saved();
-        if !self.is_dirty()
+        self.advance_exit();
+        if self.exit_state == ExitState::Running
+            && !self.is_dirty()
             && let Some(nav) = self.navigate_after_save.take()
         {
             self.navigate_to(nav);
@@ -1147,6 +1190,39 @@ impl Render for LumenCatApp {
             .font_family("Segoe UI")
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 let ks = &event.keystroke;
+                if this.exit_state != ExitState::Running {
+                    cx.stop_propagation();
+                    return;
+                }
+                if ks.key == "tab" {
+                    if ks.modifiers.shift {
+                        window.focus_prev(cx);
+                    } else {
+                        window.focus_next(cx);
+                    }
+                    cx.stop_propagation();
+                    cx.notify();
+                    return;
+                }
+                if ks.modifiers.control && matches!(ks.key.as_str(), "o" | "n") {
+                    this.project_dialog(ks.key == "n");
+                    cx.stop_propagation();
+                    cx.notify();
+                    return;
+                }
+                if this.ribbon_tab.is_page() {
+                    if ks.key == "escape" {
+                        this.ribbon_tab = RibbonTab::Home;
+                        this.target_input.focus_handle.focus(window, cx);
+                        cx.notify();
+                    } else if ks.modifiers.control && ks.key == "s" {
+                        this.save(true);
+                    } else if ks.modifiers.shift && ks.key == "f12" {
+                        this.export_document_dialog();
+                    }
+                    cx.stop_propagation();
+                    return;
+                }
                 let search = this.search_input.focus_handle.is_focused(window);
                 let replacement = this.replacement_input.focus_handle.is_focused(window);
                 let source_language = this.source_language_input.focus_handle.is_focused(window);
@@ -1189,12 +1265,6 @@ impl Render for LumenCatApp {
                         this.source_language_input.handle_key(event, cx);
                     } else {
                         this.target_language_input.handle_key(event, cx);
-                    }
-                } else if ks.key == "tab" {
-                    if ks.modifiers.shift {
-                        window.focus_prev(cx);
-                    } else {
-                        window.focus_next(cx);
                     }
                 } else if ks.modifiers.control && matches!(ks.key.as_str(), "f" | "h") {
                     this.show_replace = ks.key == "h";
@@ -1281,255 +1351,36 @@ impl Render for LumenCatApp {
                 cx.stop_propagation();
                 cx.notify();
             }))
-            .child(self.render_header(entity.clone()))
-            .child(
-                div()
-                    .flex_1()
-                    .flex()
-                    .flex_row()
-                    .overflow_hidden()
-                    .child(self.render_sidebar(entity.clone()))
-                    .child(self.render_center(entity.clone()))
-                    .child(self.render_right_panel(entity.clone())),
-            )
-            .child(self.render_progress(entity.clone()))
+            .when(self.ribbon_tab != RibbonTab::File, |d| {
+                d.child(self.render_ribbon(entity.clone()))
+            })
+            .when(self.ribbon_tab.is_page(), |d| {
+                d.child(self.render_ribbon_page(entity.clone(), cx))
+            })
+            .when(!self.ribbon_tab.is_page(), |d| {
+                d.child(
+                    div()
+                        .flex_1()
+                        .flex()
+                        .flex_row()
+                        .overflow_hidden()
+                        .when(self.show_documents, |d| {
+                            d.child(self.render_sidebar(entity.clone()))
+                        })
+                        .child(self.render_center(entity.clone()))
+                        .when(self.show_tools, |d| {
+                            d.child(self.render_right_panel(entity.clone()))
+                        }),
+                )
+            })
+            .when(!self.ribbon_tab.is_page(), |d| {
+                d.child(self.render_progress(entity.clone()))
+            })
             .child(self.render_status_bar())
     }
 }
 
 impl LumenCatApp {
-    fn render_header(&self, entity: Entity<Self>) -> impl IntoElement {
-        let is_ready = self.opened && !self.is_busy() && !self.is_dirty();
-        let doc_selected = self.current_document_id.is_some();
-
-        div()
-            .id("header")
-            .role(Role::Toolbar)
-            .aria_label("Proyecto y documentos")
-            .h(px(52.))
-            .w_full()
-            .bg(Theme::bg_surface())
-            .border_b_1()
-            .border_color(Theme::border_subtle())
-            .px_4()
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_between()
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_3()
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .w(px(26.))
-                                    .h(px(26.))
-                                    .rounded_md()
-                                    .bg(Theme::sky())
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .text_color(rgb(0x0a101d))
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_sm()
-                                    .child("✦"),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .child(
-                                        div()
-                                            .font_weight(FontWeight::BOLD)
-                                            .text_sm()
-                                            .text_color(Theme::text_primary())
-                                            .child("LumenCAT"),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_xs()
-                                            .text_color(Theme::text_muted())
-                                            .child("Local Translation Studio"),
-                                    ),
-                            ),
-                    )
-                    .child(div().h(px(20.)).w(px(1.)).bg(Theme::border_subtle()))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .id("project-name")
-                                    .role(Role::Label)
-                                    .aria_label(if self.opened {
-                                        self.project_path.clone()
-                                    } else {
-                                        "Sin proyecto".into()
-                                    })
-                                    .px_2()
-                                    .py_1()
-                                    .rounded_md()
-                                    .bg(Theme::bg_subtle())
-                                    .border_1()
-                                    .border_color(Theme::border_subtle())
-                                    .text_xs()
-                                    .text_color(if self.opened {
-                                        Theme::text_primary()
-                                    } else {
-                                        Theme::text_muted()
-                                    })
-                                    .child(if self.opened {
-                                        let p = PathBuf::from(&self.project_path);
-                                        p.file_name()
-                                            .map(|n| n.to_string_lossy().to_string())
-                                            .unwrap_or_else(|| self.project_path.clone())
-                                    } else {
-                                        "No project loaded".into()
-                                    }),
-                            )
-                            .child(custom_button(
-                                "project-open",
-                                if self.opened {
-                                    "Switch Project"
-                                } else {
-                                    "Open / Create Project"
-                                },
-                                ButtonVariant::Secondary,
-                                !self.is_busy() && !self.is_dirty(),
-                                {
-                                    let entity = entity.clone();
-                                    move |_event, _window, cx| {
-                                        entity.update(cx, |this, _cx| {
-                                            this.open_project_dialog();
-                                        });
-                                    }
-                                },
-                            )),
-                    ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .child(custom_button(
-                        "document-import",
-                        "Importar documento",
-                        ButtonVariant::Secondary,
-                        is_ready,
-                        {
-                            let entity = entity.clone();
-                            move |_event, _window, cx| {
-                                entity.update(cx, |this, _cx| {
-                                    this.import_document_dialog();
-                                });
-                            }
-                        },
-                    ))
-                    .when(self.show_memory_actions, |bar| {
-                        bar.child(custom_button(
-                            "tm-import",
-                            "Importar TMX",
-                            ButtonVariant::Secondary,
-                            is_ready,
-                            {
-                                let entity = entity.clone();
-                                move |_event, _window, cx| {
-                                    entity.update(cx, |this, _cx| {
-                                        this.import_tmx_dialog();
-                                    });
-                                }
-                            },
-                        ))
-                    })
-                    .child(custom_button(
-                        "document-export",
-                        "Exportar documento",
-                        ButtonVariant::Secondary,
-                        is_ready && doc_selected,
-                        {
-                            let entity = entity.clone();
-                            move |_event, _window, cx| {
-                                entity.update(cx, |this, _cx| {
-                                    this.export_document_dialog();
-                                });
-                            }
-                        },
-                    ))
-                    .when(self.show_memory_actions, |bar| {
-                        bar.child(custom_button(
-                            "tm-export",
-                            "Exportar TMX",
-                            ButtonVariant::Secondary,
-                            is_ready,
-                            {
-                                let entity = entity.clone();
-                                move |_event, _window, cx| {
-                                    entity.update(cx, |this, _cx| {
-                                        this.export_tmx_dialog();
-                                    });
-                                }
-                            },
-                        ))
-                    })
-                    .child(
-                        custom_button("memory-menu", "Memoria ▾", ButtonVariant::Ghost, true, {
-                            let entity = entity.clone();
-                            move |_, _, cx| {
-                                entity.update(cx, |this, cx| {
-                                    this.show_memory_actions = !this.show_memory_actions;
-                                    cx.notify();
-                                });
-                            }
-                        })
-                        .aria_expanded(self.show_memory_actions)
-                        .on_a11y_action(AccessibleAction::Expand, {
-                            let entity = entity.clone();
-                            move |_, _, cx| {
-                                entity.update(cx, |this, cx| {
-                                    this.show_memory_actions = true;
-                                    cx.notify();
-                                });
-                            }
-                        })
-                        .on_a11y_action(AccessibleAction::Collapse, {
-                            let entity = entity.clone();
-                            move |_, _, cx| {
-                                entity.update(cx, |this, cx| {
-                                    this.show_memory_actions = false;
-                                    cx.notify();
-                                });
-                            }
-                        }),
-                    )
-                    .child(div().h(px(20.)).w(px(1.)).bg(Theme::border_subtle()))
-                    .child(history_button(false, !self.is_busy(), {
-                        let entity = entity.clone();
-                        move |_event, _window, cx| {
-                            entity.update(cx, |this, _cx| {
-                                this.history(false);
-                            });
-                        }
-                    }))
-                    .child(history_button(true, !self.is_busy(), {
-                        let entity = entity.clone();
-                        move |_event, _window, cx| {
-                            entity.update(cx, |this, _cx| {
-                                this.history(true);
-                            });
-                        }
-                    })),
-            )
-    }
-
     fn render_sidebar(&self, entity: Entity<Self>) -> impl IntoElement {
         let docs = self.documents.clone();
         let curr_id = self.current_document_id;
@@ -1602,7 +1453,7 @@ impl LumenCatApp {
                             .text_xs()
                             .font_weight(FontWeight::BOLD)
                             .text_color(Theme::text_secondary())
-                            .child("DOCUMENTS"),
+                            .child("DOCUMENTOS"),
                     )
                     .child(
                         div()
@@ -1640,11 +1491,9 @@ impl LumenCatApp {
                                 .justify_center()
                                 .gap_2()
                                 .text_center()
-                                .child(
-                                    div().text_xs().text_color(Theme::text_muted()).child(
-                                        "No documents yet.\nImport DOCX, XLIFF, or TXT above.",
-                                    ),
-                                )
+                                .child(div().text_xs().text_color(Theme::text_muted()).child(
+                                    "Sin documentos.\nImporta DOCX, XLIFF o TXT desde Archivo.",
+                                ))
                                 .into_any_element(),
                         ]
                     } else {
@@ -1875,7 +1724,6 @@ impl LumenCatApp {
             .bg(Theme::bg_app())
             .overflow_hidden()
             .child(self.render_search_toolbar(entity.clone()))
-            .child(self.render_editor_toolbar(entity.clone()))
             .child(self.render_bilingual_grid(entity, doc_count, is_searching, search_count))
     }
 
@@ -2031,8 +1879,8 @@ impl LumenCatApp {
         let (source_label, target_label) = {
             let (sl, tl) = self.document_languages();
             (
-                format!("SOURCE · {}", sl.to_uppercase()),
-                format!("TARGET · {}", tl.to_uppercase()),
+                format!("ORIGEN · {}", sl.to_uppercase()),
+                format!("DESTINO · {}", tl.to_uppercase()),
             )
         };
 
@@ -2067,8 +1915,8 @@ impl LumenCatApp {
                     .text_color(Theme::text_secondary())
                     .child(div().w(px(50.)).child("#"))
                     .child(div().flex_1().min_w_0().child(source_label))
-                    .child(div().flex_1().min_w_0().child(target_label))
-                    .child(div().w(px(5.))),
+                    .child(div().w(px(5.)))
+                    .child(div().flex_1().min_w_0().child(target_label)),
             )
             .child(
                 div()
@@ -2093,7 +1941,7 @@ impl LumenCatApp {
                                 .child(if is_searching {
                                     "No matching segments found."
                                 } else {
-                                    "No segments in this document."
+                                    "Este documento no tiene segmentos."
                                 }),
                         )
                     })
@@ -2259,7 +2107,7 @@ impl LumenCatApp {
             .aria_label("Destino")
             .aria_value(target_aria)
             .a11y_synthetic_children(|tree| tree.parent_node().set_read_only())
-            .aria_column_index(2)
+            .aria_column_index(3)
             .flex_1()
             .min_w_0()
             .flex()
@@ -2356,7 +2204,7 @@ impl LumenCatApp {
             .aria_label("Estado")
             .aria_value(format!("{state_str}; {lock_str}"))
             .a11y_synthetic_children(|tree| tree.parent_node().set_read_only())
-            .aria_column_index(3)
+            .aria_column_index(2)
             .w(px(5.))
             .self_stretch()
             .rounded_full()
@@ -2413,8 +2261,8 @@ impl LumenCatApp {
             })
             .child(number)
             .child(source)
-            .child(target)
             .child(state_cell)
+            .child(target)
             .into_any_element()
     }
 
@@ -2546,20 +2394,26 @@ impl LumenCatApp {
                         });
                     },
                 )
-                .aria_label("Insertar siguiente etiqueta protegida")
-                .aria_keyshortcuts("Control+,"),
+                .accessibility_label("Insertar siguiente etiqueta protegida")
+                .icon(gpui::assets::IconName::Tags)
+                .tooltip("Insertar siguiente etiqueta protegida · Ctrl+,"),
             )
-            .child(custom_button(
-                "segment-confirm-next",
-                "Confirmar y avanzar",
-                ButtonVariant::Success,
-                has_active && !locked,
-                move |_event, _window, cx| {
-                    entity_confirm.update(cx, |this, _cx| {
-                        this.confirm_and_next();
-                    });
-                },
-            ))
+            .child(
+                custom_button(
+                    "segment-confirm-next",
+                    "Confirmar",
+                    ButtonVariant::Success,
+                    has_active && !locked,
+                    move |_event, _window, cx| {
+                        entity_confirm.update(cx, |this, _cx| {
+                            this.confirm_and_next();
+                        });
+                    },
+                )
+                .accessibility_label("Confirmar y avanzar")
+                .icon(gpui::assets::IconName::Check)
+                .tooltip("Confirmar y avanzar · Ctrl+Enter"),
+            )
     }
 
     fn render_right_panel(&self, entity: Entity<Self>) -> impl IntoElement {

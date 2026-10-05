@@ -11,7 +11,7 @@
 
 ## How to get to it (user POV)
 
-Con proyecto abierto, pulsa **Importar documento** (diálogo nativo con filtros `docx`, `xlf/xliff`, `txt`) y elige el archivo. El documento aparece en **DOCUMENTS** con su par (`en → es; N segmentos`) y el grid carga sus filas. Resultado observable: conteo de segmentos igual a las líneas TXT, unidades XLIFF o párrafos/celdas DOCX.
+Con proyecto abierto, entra en **Archivo**, pulsa **Importar documento** (diálogo nativo con filtros `docx`, `xlf/xliff`, `txt`) y elige el archivo. El documento aparece en **DOCUMENTOS** con su par (`en → es; N segmentos`) y el grid carga sus filas. Resultado observable: conteo de segmentos igual a las líneas TXT, unidades XLIFF o párrafos/celdas DOCX.
 
 **Exportar documento** (o Shift+F12) exige documento seleccionado y sin cambios pendientes; el diálogo nativo guarda con filtro `docx/xlf/xliff/txt`. Resultado observable: archivo nuevo; el original queda byte a byte idéntico (compara hash antes/después). Si el destino ya existe o coincide con el original, la operación falla con mensaje y no se escribe nada.
 

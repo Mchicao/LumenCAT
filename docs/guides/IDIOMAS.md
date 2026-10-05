@@ -1,6 +1,6 @@
 # Idiomas de importación
 
-En GPUI, configura **Origen** y **Destino** en la barra lateral y pulsa **Guardar idiomas** antes de importar. Se guardan en el proyecto y se recuperan al reabrirlo. La interfaz legacy ofrece la misma acción.
+Configura **Origen** y **Destino** en la barra lateral GPUI y pulsa **Guardar idiomas** antes de importar. Se guardan en el proyecto y se recuperan al reabrirlo.
 
 - Usa códigos como `fr`, `es`, `pt-BR`, `pt-PT` o `zh-Hant`. Este corte valida un subconjunto sintáctico: no consulta un registro de idiomas ni certifica diccionarios para todos ellos.
 - Cambiar estos valores afecta próximas importaciones, no los idiomas de documentos ya guardados. Las búsquedas TM usan el par del documento activo.

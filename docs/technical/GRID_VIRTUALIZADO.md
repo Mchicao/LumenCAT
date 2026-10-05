@@ -18,7 +18,7 @@ La búsqueda usa la misma lista virtualizada, pero todavía almacena todos sus r
 | `cargo test --locked` | PASS: 42 pruebas, incluidas expulsión de caché y conservación de filas cercanas tras saltar entre regiones. |
 | `cargo fmt --check` | PASS. |
 | `cargo clippy --locked --all-targets -- -D warnings` | PASS. Persiste el aviso previo de incompatibilidad futura de `proc-macro-error2 2.0.1`. |
-| `cargo build --locked --bin lumencat --bin lumencat-gpui` | PASS debug; no se reemplazó el EXE de uso diario. |
+| Compilación debug de los lanzadores de esa entrega, incluido `lumencat` | PASS; no se reemplazó el EXE de uso diario. Actualmente hay un único lanzador de escritorio. |
 | `verify_grid` | PASS: importar 100.000 líneas Unicode, confirmar ambos extremos, cerrar y reabrir conserva traducciones. |
 | GPUI nativa | PASS: abrir el proyecto grande, seleccionar fila 2, buscar `Segment 100000`, seleccionar el resultado y limpiar la búsqueda muestra las filas 99.995–100.000 con el activo correcto. |
 | Edición y confirmación | PASS: añadir ` · F17` en el último destino, observar autoguardado y Draft, confirmar por botón y observar la coincidencia exacta aprendida. |
@@ -42,4 +42,4 @@ Abrir `large.lcat` con el binario GPUI aislado. Buscar `Segment 100000`, selecci
 
 No se midieron p50/p95, RAM, cold/warm ni un recorrido continuo de scroll. Atajos físicos, selección parcial, IME, RTL y accesibilidad siguen sin acreditarse; el baseline GPUI solo expone controles de ventana en UIA. La edición background sí quedó comprobada, aunque los atajos combinados fueron rechazados por el transporte en la verificación anterior.
 
-Este corte no cambia esquema, worker, formatos ni la interfaz legacy. Su límite de rollback es la lista/caché en `src/gpui_app/mod.rs`, el ejemplo `verify_grid` y su entrada en `Cargo.toml`, junto a estas afirmaciones documentales; no afecta las entregas previas de idiomas y TM.
+Este corte no cambia esquema, worker ni formatos. Su límite de rollback es la lista/caché en `src/gpui_app/mod.rs`, el ejemplo `verify_grid` y su entrada en `Cargo.toml`, junto a estas afirmaciones documentales; no afecta las entregas previas de idiomas y TM.

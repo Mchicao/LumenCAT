@@ -24,7 +24,7 @@ Cada guardado crea un concepto. La interfaz inicial añade dos expresiones; el n
 | `term-ambiguous` | Varios conceptos coinciden en el mismo rango fuente. Se muestran las alternativas sin escoger sentido ni imponer sus reglas contradictorias. |
 | `term-unavailable` | El reconocimiento falla o excede sus límites. Terminología queda no evaluada; QA textual sigue funcionando. |
 
-Los avisos no corrigen texto ni bloquean confirmación. GPUI descarta respuestas ligadas a una selección/borrador anterior. Legacy también recibe los avisos QA del mismo worker, pero no dispone del gestor de bases/conceptos.
+Los avisos no corrigen texto ni bloquean confirmación. GPUI descarta respuestas ligadas a una selección/borrador anterior y presenta los avisos QA del worker.
 
 El motor usa tokens alfanuméricos Unicode y marcas combinantes. Espacios y puntuación separan tokens; no se exige la misma puntuación entre palabras de una frase. NFC y minúsculas son auxiliares: no cambian los datos guardados. No elimina tildes ni aplica flexión/morfología, y no segmenta lenguas sin espacios. En DOCX ignora los códigos `<g>/<x/>`; en TXT/XLIFF textual los trata como texto literal. Los rangos son bytes UTF-8 del original; aún no se resaltan en el editor.
 
@@ -43,6 +43,6 @@ El 3 de octubre de 2026, build debug Windows aislada: **47 pruebas**, formato y 
 
 En GPUI background se creó `Cliente F03`, se añadió `Segment 1 → traducción` como destino prohibido, se observó reconocimiento y `term-forbidden` en QA, y se desactivó la base. El destino del documento siguió confirmado y no cambió. Tras cerrar, SQLite de solo lectura verificó schema 5, integridad, un concepto/dos expresiones y estado desactivado; contra el respaldo v4 conservó 1 documento, 100.000 segmentos, 2 entradas de historial y 2 TU, además de textos extremos, historial, settings y TM completos.
 
-Evidencia local ignorada por Git: `logs/tests/f03-final.log`, `f03-clippy.log`, `f03-build.log`, `f03-gui-persistence.log`; capturas en `output/verification/f03/recognized.png`, `qa-forbidden.png` y `disabled.png`. Los clics y la entrada background fueron verificados por capturas posteriores; no acreditan atajos físicos, IME/RTL, accesibilidad ni legacy interactiva.
+Evidencia local ignorada por Git: `logs/tests/f03-final.log`, `f03-clippy.log`, `f03-build.log`, `f03-gui-persistence.log`; capturas en `output/verification/f03/recognized.png`, `qa-forbidden.png` y `disabled.png`. Los clics y la entrada background fueron verificados por capturas posteriores; no acreditan atajos físicos, IME/RTL ni accesibilidad completa.
 
-La frontera de rollback es el módulo/modelo de terminología, migración v5, comandos compartidos, integración GPUI/input y QA legacy, sus pruebas y afirmaciones documentales. No se convierte un proyecto v5 a v4 revirtiendo código; conserva su respaldo anterior.
+La frontera de rollback es el módulo/modelo de terminología, migración v5, comandos compartidos, integración GPUI/input y QA, sus pruebas y afirmaciones documentales. No se convierte un proyecto v5 a v4 revirtiendo código; conserva su respaldo anterior.

@@ -1,15 +1,12 @@
 use super::theme::Theme;
 use crate::model::SegmentState;
+use gpui::component::{
+    Disableable, Sizable,
+    button::{Button, ButtonVariants},
+};
 use gpui::*;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum ButtonVariant {
-    Primary,
-    Success,
-    Secondary,
-    Ghost,
-    Danger,
-}
+pub use gpui::component::button::ButtonVariant;
 
 pub fn custom_button<F>(
     id: impl Into<SharedString>,
@@ -17,85 +14,18 @@ pub fn custom_button<F>(
     variant: ButtonVariant,
     enabled: bool,
     on_click_handler: F,
-) -> Stateful<Div>
+) -> Button
 where
     F: Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 {
-    use gpui::prelude::*;
     let id = id.into();
-    let label = label.into();
-    let mut btn = div()
-        .id(id.clone())
+    Button::new(id.clone())
         .accessibility_id(id)
-        .role(Role::Button)
-        .aria_label(label.clone())
-        .a11y_synthetic_children(move |tree| {
-            if !enabled {
-                tree.parent_node().set_disabled();
-            }
-        })
-        .when(enabled, |d| d.focusable().tab_stop(true))
-        .focus_visible(|s| s.border_color(Theme::sky()))
-        .flex()
-        .items_center()
-        .justify_center()
-        .px_3()
-        .py_1p5()
-        .rounded_md()
-        .text_sm()
-        .font_weight(FontWeight::MEDIUM)
-        .cursor_pointer();
-
-    if !enabled {
-        return btn
-            .bg(Theme::bg_subtle())
-            .text_color(Theme::text_muted())
-            .border_1()
-            .border_color(Theme::border_subtle())
-            .cursor_default()
-            .child(label);
-    }
-
-    match variant {
-        ButtonVariant::Primary => {
-            btn = btn
-                .bg(Theme::sky())
-                .text_color(rgb(0x0a101d))
-                .font_weight(FontWeight::SEMIBOLD)
-                .hover(|s| s.bg(rgb(0x7dd3fc)));
-        }
-        ButtonVariant::Success => {
-            btn = btn
-                .bg(Theme::emerald())
-                .text_color(rgb(0x062817))
-                .font_weight(FontWeight::SEMIBOLD)
-                .hover(|s| s.bg(rgb(0x34d399)));
-        }
-        ButtonVariant::Secondary => {
-            btn = btn
-                .bg(Theme::bg_subtle())
-                .text_color(Theme::text_primary())
-                .border_1()
-                .border_color(Theme::border_medium())
-                .hover(|s| s.bg(Theme::bg_hover()).border_color(Theme::sky()));
-        }
-        ButtonVariant::Ghost => {
-            btn = btn
-                .bg(gpui::transparent_black())
-                .text_color(Theme::text_secondary())
-                .hover(|s| s.bg(Theme::bg_hover()).text_color(Theme::text_primary()));
-        }
-        ButtonVariant::Danger => {
-            btn = btn
-                .bg(Theme::rose_bg())
-                .text_color(Theme::rose())
-                .border_1()
-                .border_color(Theme::rose())
-                .hover(|s| s.bg(Theme::rose()).text_color(Theme::text_primary()));
-        }
-    }
-
-    btn.on_click(on_click_handler).child(label)
+        .label(label)
+        .with_variant(variant)
+        .small()
+        .disabled(!enabled)
+        .on_click(on_click_handler)
 }
 
 pub fn quick_button<F>(
@@ -103,7 +33,7 @@ pub fn quick_button<F>(
     variant: ButtonVariant,
     enabled: bool,
     on_click_handler: F,
-) -> Stateful<Div>
+) -> Button
 where
     F: Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 {
@@ -112,84 +42,27 @@ where
     custom_button(id, label, variant, enabled, on_click_handler)
 }
 
-pub fn history_button<F>(redo: bool, enabled: bool, handler: F) -> impl IntoElement
+pub fn history_button<F>(redo: bool, enabled: bool, handler: F) -> Button
 where
     F: Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 {
-    use gpui::prelude::*;
-    div()
-        .id(if redo { "redo" } else { "undo" })
+    Button::new(if redo { "redo" } else { "undo" })
         .accessibility_id(if redo { "redo" } else { "undo" })
-        .role(Role::Button)
-        .aria_label(if redo { "Rehacer" } else { "Deshacer" })
-        .aria_keyshortcuts(if redo { "Control+Y" } else { "Control+Z" })
-        .a11y_synthetic_children(move |tree| {
-            if !enabled {
-                tree.parent_node().set_disabled();
-            }
+        .accessibility_label(if redo { "Rehacer" } else { "Deshacer" })
+        .icon(if redo {
+            gpui::assets::IconName::Redo
+        } else {
+            gpui::assets::IconName::Undo
         })
-        .size(px(30.))
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded_md()
-        .when(enabled, |d| {
-            d.focusable()
-                .tab_stop(true)
-                .cursor_pointer()
-                .hover(|s| s.bg(Theme::bg_hover()))
-                .on_click(handler)
+        .tooltip(if redo {
+            "Rehacer · Ctrl+Y"
+        } else {
+            "Deshacer · Ctrl+Z"
         })
-        .tooltip(move |_, cx| cx.new(move |_| HistoryTooltip(redo)).into())
-        .child(
-            canvas(
-                |_, _, _| (),
-                move |bounds, _, window, _| {
-                    let at = |x: f32, y: f32| {
-                        bounds.origin + point(px(if redo { 18. - x } else { x }), px(y))
-                    };
-                    let mut path = PathBuilder::stroke(px(1.7));
-                    path.move_to(at(7., 3.));
-                    path.line_to(at(3., 7.));
-                    path.line_to(at(7., 11.));
-                    path.move_to(at(3., 7.));
-                    path.line_to(at(10., 7.));
-                    path.curve_to(at(15., 12.), at(15., 7.));
-                    path.curve_to(at(10., 16.), at(15., 16.));
-                    path.line_to(at(7., 16.));
-                    if let Ok(path) = path.build() {
-                        window.paint_path(
-                            path,
-                            if enabled {
-                                Theme::text_secondary()
-                            } else {
-                                Theme::text_muted()
-                            },
-                        );
-                    }
-                },
-            )
-            .size(px(18.)),
-        )
-}
-
-struct HistoryTooltip(bool);
-
-impl Render for HistoryTooltip {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .px_2()
-            .py_1()
-            .rounded_md()
-            .bg(Theme::bg_surface())
-            .text_color(Theme::text_primary())
-            .text_xs()
-            .child(if self.0 {
-                "Rehacer · Ctrl+Y"
-            } else {
-                "Deshacer · Ctrl+Z"
-            })
-    }
+        .ghost()
+        .small()
+        .disabled(!enabled)
+        .on_click(handler)
 }
 
 pub fn status_badge(state: SegmentState, locked: bool) -> Div {
@@ -209,7 +82,7 @@ pub fn status_badge(state: SegmentState, locked: bool) -> Div {
             .text_color(Theme::slate())
             .border_1()
             .border_color(Theme::slate())
-            .child("🔒 Locked");
+            .child("Bloqueado");
     }
 
     match state {
@@ -218,13 +91,13 @@ pub fn status_badge(state: SegmentState, locked: bool) -> Div {
             .text_color(Theme::emerald())
             .border_1()
             .border_color(Theme::emerald())
-            .child("✓ Confirmed"),
+            .child("Confirmado"),
         SegmentState::Draft => base
             .bg(Theme::amber_bg())
             .text_color(Theme::amber())
             .border_1()
             .border_color(Theme::amber())
-            .child("✎ Draft"),
+            .child("Borrador"),
     }
 }
 

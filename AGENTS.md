@@ -2,14 +2,15 @@
 
 ## Optimized tooling
 
-- Build state lives in `.cache/target`; never point builds at another `target/` or duplicate it.
-- Never set global `RUSTFLAGS`/`CARGO_ENCODED_RUSTFLAGS`; flags belong in repo config so builds stay reproducible.
+- New machine bootstrap BEFORE building: `cargo install kache --locked` (the project wraps rustc with kache; builds fail without it — verify with `kache doctor`) and `cargo install cargo-nextest --locked`. Stable Rust >= 1.99; nightly not required.
+- Fast loop: `cargo fast-check` (incremental check), `cargo fast-test` (nextest), `cargo fast` (build+run), `cargo dbg` (full debuginfo). `cargo test` stays valid for doctests/special cases.
+- Build state lives in `.cache/target`; never point builds at another `target/` or duplicate it. Worktrees get their own target and reuse deps through the kache store (hardlinks, 20GiB cap, auto GC).
+- Never set global `RUSTFLAGS`/`CARGO_ENCODED_RUSTFLAGS`; flags belong in repo config so builds and cache keys stay reproducible.
+- Kache is the only cache wrapper (project-scoped `rustc-wrapper`). Never stack sccache or a second wrapper; use `kache stats --last-build` / `kache explain` for hit rates and misses.
 - Release stays conservative: LLVM, `lto = "thin"`, `codegen-units = 1`. Never move release to an experimental backend (Cranelift) or drop safety flags.
-- Experimental speedups (nightly, Cranelift, `-Zthreads`, linker swap, Kache) are dev-only: benchmark before/after, keep only what helps, revert anything that breaks GPUI, tests, or the release build.
-- One cache wrapper max (Kache when enabled). Never stack sccache on top or run two wrappers.
-- Concurrent agents/worktrees share artifacts only through the content-addressed cache; never share one `target/` directly.
+- Experimental speedups (nightly, Cranelift, `-Zthreads`, linker swaps) are dev-only, need before/after benchmarks, and were already tried and rejected with evidence — see `docs/technical/TOOLING_20261005.md` before re-testing one.
 - No antivirus/Defender exclusions or security changes without explicit user approval; report them as recommendations instead.
-- Prefer the fast loop (incremental check/test) for iteration; run full `cargo clippy --locked --all-targets -- -D warnings`, `cargo fmt`, and the whole suite before claiming done. `unwrap`/`expect` are denied, tests included.
+- Gate before claiming done: full `cargo clippy --locked --all-targets -- -D warnings`, `cargo fmt`, and the whole suite. `unwrap`/`expect` are denied, tests included.
 - `#[ignore]` SDK tests need a fresh dir under `output/verification/` via env var; they never overwrite previous runs.
 
 ## E2E / GUI verification

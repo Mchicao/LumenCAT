@@ -20,6 +20,6 @@ No se conduce ni reemplaza la instancia entregada al usuario en `file-menu-final
 
 ## Límites abiertos
 
-`seg-source`, `sub`, extensiones inline específicas, comentarios dentro de campos traducibles, literal `<g>`/`<x>` ambiguo, pares nativos superpuestos, XLIFF 2.x y SDLXLIFF requieren cortes adicionales. No se aplanan silenciosamente.
+El corte posterior de [XLIFF segmentado](XLIFF_SEGMENTADO_20261005.md) añade filas para `seg-source`. `sub`, extensiones inline específicas, comentarios dentro de campos traducibles, literal `<g>`/`<x>` ambiguo, pares nativos superpuestos, XLIFF 2.x y SDLXLIFF requieren cortes adicionales. No se aplanan silenciosamente.
 
 Los límites de documentos y segmentos siguen vigentes; no es un adaptador universal ni una validación completa contra XSD.

@@ -2,6 +2,7 @@
 pub mod docx;
 pub(crate) mod inline;
 pub mod sdltm;
+mod segmented;
 
 use crate::model::*;
 use quick_xml::{Reader, Writer, events::Event};
@@ -132,7 +133,10 @@ pub fn import_document(
             DocumentFormat::Xliff12,
             xliff_with_languages(text, cancel, Some((source_lang, target_lang)))?
                 .into_iter()
-                .map(|u| u.segment)
+                .flat_map(|u| match u.segmented {
+                    Some(segmented) => segmented.segments(&u.segment),
+                    None => vec![u.segment],
+                })
                 .collect(),
         ),
         _ => return Err(invalid("use TXT UTF-8, XLIFF 1.2 o DOCX")),
@@ -188,6 +192,17 @@ struct XUnit {
     target: Option<(usize, usize)>,
     insertion: usize,
     target_name: String,
+    source_content: Option<(usize, usize)>,
+    seg_source: Option<(usize, usize)>,
+    target_content: Option<(usize, usize)>,
+    segmented: Option<segmented::Unit>,
+    target_context: Vec<(String, String)>,
+}
+#[derive(Clone, Copy, PartialEq)]
+enum XField {
+    Source,
+    Segmented,
+    Target,
 }
 fn xliff(text: &str, cancel: &Cancellation) -> Result<Vec<XUnit>> {
     xliff_with_languages(text, cancel, None)
@@ -204,10 +219,11 @@ fn xliff_with_languages(
     let mut stack: Vec<Vec<u8>> = Vec::new();
     let mut units = Vec::new();
     let mut active: Option<XUnit> = None;
-    let mut field: Option<(bool, usize, usize)> = None;
+    let mut field: Option<(XField, usize, usize)> = None;
     let mut target_start = 0;
     let mut source_seen = false;
     let mut target_seen = false;
+    let mut segmented_seen = false;
     let mut root_seen = false;
     let mut root_closed = false;
     let mut file_ids = std::collections::HashSet::new();
@@ -255,11 +271,6 @@ fn xliff_with_languages(
                         stack.push(name);
                     }
                     continue;
-                }
-                if lname == b"seg-source" {
-                    return Err(invalid(
-                        "XLIFF segmentado con seg-source no soportado todavía",
-                    ));
                 }
                 if lname == b"file" {
                     if let Some((source, target)) = languages {
@@ -314,27 +325,63 @@ fn xliff_with_languages(
                         target: None,
                         insertion: 0,
                         target_name: format!("{}target", String::from_utf8_lossy(prefix)),
+                        source_content: None,
+                        seg_source: None,
+                        target_content: None,
+                        segmented: None,
+                        target_context: Vec::new(),
                     });
                     source_seen = false;
                     target_seen = false;
+                    segmented_seen = false;
                 } else if active.is_some()
                     && stack.last().is_some_and(|n| local(n) == b"trans-unit")
-                    && matches!(lname, b"source" | b"target")
+                    && matches!(lname, b"source" | b"seg-source" | b"target")
                 {
-                    let target = lname == b"target";
-                    if target && !source_seen {
-                        return Err(invalid("target XLIFF debe aparecer después de source"));
+                    let kind = match lname {
+                        b"target" => XField::Target,
+                        b"seg-source" => XField::Segmented,
+                        _ => XField::Source,
+                    };
+                    let target = kind == XField::Target;
+                    if kind != XField::Source && !source_seen {
+                        return Err(invalid(
+                            "seg-source/target XLIFF debe aparecer después de source",
+                        ));
                     }
-                    if if target { target_seen } else { source_seen } {
-                        return Err(invalid("source/target duplicado"));
+                    if kind == XField::Segmented && target_seen {
+                        return Err(invalid("seg-source debe aparecer antes de target"));
                     }
+                    let seen = match kind {
+                        XField::Source => &mut source_seen,
+                        XField::Segmented => &mut segmented_seen,
+                        XField::Target => &mut target_seen,
+                    };
+                    if *seen {
+                        return Err(invalid(
+                            "source/seg-source/target duplicado o fuera de orden",
+                        ));
+                    }
+                    *seen = true;
                     if target {
-                        target_seen = true;
                         target_start = before;
-                    } else {
-                        source_seen = true;
                     }
                     if let Some(u) = active.as_mut() {
+                        if !target {
+                            for attribute in s.attributes() {
+                                let attribute = attribute.map_err(invalid)?;
+                                let key =
+                                    std::str::from_utf8(attribute.key.as_ref()).map_err(invalid)?;
+                                if key == "xmlns" || key.starts_with("xmlns:") || key == "xml:space"
+                                {
+                                    u.target_context.retain(|(existing, _)| existing != key);
+                                    u.target_context.push((
+                                        key.into(),
+                                        attribute.unescape_value().map_err(invalid)?.into_owned(),
+                                    ));
+                                }
+                            }
+                        }
                         if target {
                             if matches!(
                                 attr(s, b"state")?.as_deref(),
@@ -350,9 +397,18 @@ fn xliff_with_languages(
                         if matches!(event, Event::Empty(_)) && !target {
                             u.insertion = reader.buffer_position() as usize;
                         }
+                        if matches!(event, Event::Empty(_)) {
+                            let position = reader.buffer_position() as usize;
+                            let content = Some((position, position));
+                            match kind {
+                                XField::Source => u.source_content = content,
+                                XField::Segmented => u.seg_source = content,
+                                XField::Target => u.target_content = content,
+                            }
+                        }
                     }
                     if matches!(event, Event::Start(_)) {
-                        field = Some((target, stack.len() + 1, reader.buffer_position() as usize));
+                        field = Some((kind, stack.len() + 1, reader.buffer_position() as usize));
                     }
                 }
                 if matches!(event, Event::Start(_)) {
@@ -363,23 +419,31 @@ fn xliff_with_languages(
                 if stack.pop().as_deref() != Some(e.name().as_ref()) {
                     return Err(invalid("XML sin balance"));
                 }
-                if let Some((target, depth, content)) = field
+                if let Some((kind, depth, content)) = field
                     && stack.len() + 1 == depth
                 {
                     if let Some(u) = active.as_mut() {
-                        if target {
+                        if kind == XField::Target {
                             u.target = Some((target_start, reader.buffer_position() as usize));
-                            u.target_inline = inline::Fragment::parse(
-                                &text[content..before],
-                                Some(&u.source_inline),
-                                cancel,
-                            )?;
-                            u.segment.target = u.target_inline.view.clone();
+                            u.target_content = Some((content, before));
+                            if !segmented_seen {
+                                u.target_inline = inline::Fragment::parse(
+                                    &text[content..before],
+                                    Some(&u.source_inline),
+                                    cancel,
+                                )?;
+                                u.segment.target = u.target_inline.view.clone();
+                            }
                         } else {
                             u.insertion = reader.buffer_position() as usize;
-                            u.source_inline =
-                                inline::Fragment::parse(&text[content..before], None, cancel)?;
-                            u.segment.source = u.source_inline.view.clone();
+                            if kind == XField::Source {
+                                u.source_content = Some((content, before));
+                                u.source_inline =
+                                    inline::Fragment::parse(&text[content..before], None, cancel)?;
+                                u.segment.source = u.source_inline.view.clone();
+                            } else {
+                                u.seg_source = Some((content, before));
+                            }
                         }
                     }
                     field = None;
@@ -388,7 +452,19 @@ fn xliff_with_languages(
                     if !source_seen {
                         return Err(invalid("trans-unit sin source"));
                     }
-                    if let Some(u) = active.take() {
+                    if let Some(mut u) = active.take() {
+                        if let Some((start, end)) = u.seg_source {
+                            let (source_start, source_end) = u
+                                .source_content
+                                .ok_or_else(|| invalid("trans-unit sin source"))?;
+                            let target = u.target_content.map_or("", |(a, b)| &text[a..b]);
+                            u.segmented = Some(segmented::Unit::parse(
+                                &text[source_start..source_end],
+                                &text[start..end],
+                                target,
+                                cancel,
+                            )?);
+                        }
                         units.push(u);
                     }
                 }
@@ -448,21 +524,48 @@ pub fn serialize_document(
         }
         DocumentFormat::Xliff12 => {
             let units = xliff(original, cancel)?;
-            if units.len() != targets.len() {
+            if units
+                .iter()
+                .map(|u| u.segmented.as_ref().map_or(1, segmented::Unit::len))
+                .sum::<usize>()
+                != targets.len()
+            {
                 return Err(invalid("skeleton XLIFF no coincide"));
             }
             let mut cursor = 0;
-            for ((u, segment), target) in units.iter().zip(&document.segments).zip(targets) {
+            let mut offset = 0;
+            for u in &units {
                 cancel.check()?;
-                if u.segment.external_id != segment.external_id
-                    || u.segment.source != segment.source
+                let count = u.segmented.as_ref().map_or(1, segmented::Unit::len);
+                let segments = &document.segments[offset..offset + count];
+                let unit_targets = &targets[offset..offset + count];
+                offset += count;
+                let expected = u.segmented.as_ref().map_or_else(
+                    || vec![u.segment.clone()],
+                    |segmented| segmented.segments(&u.segment),
+                );
+                if expected
+                    .iter()
+                    .zip(segments)
+                    .any(|(a, b)| a.external_id != b.external_id || a.source != b.source)
                 {
                     return Err(invalid("identidad/source del skeleton no coincide"));
                 }
+                let segment = &segments[0];
+                if segments.iter().any(|s| s.locked != segment.locked) {
+                    return Err(invalid(
+                        "XLIFF 1.2 representa translate por trans-unit: iguala el bloqueo de sus segmentos antes de exportar",
+                    ));
+                }
+                let target = &unit_targets[0];
                 let (start, end) = u.target.unwrap_or((u.insertion, u.insertion));
-                let changed = target != &u.segment.target;
+                let changed = u.segmented.as_ref().map_or_else(
+                    || target != &u.segment.target,
+                    |segmented| segmented.changed(unit_targets),
+                );
+                let confirmed = segments.iter().all(|s| s.state == SegmentState::Confirmed);
                 let mut unit_attributes = Vec::new();
-                if u.approved && (changed || segment.state == SegmentState::Draft) {
+                if u.approved && (changed || !confirmed) {
                     unit_attributes.push(("approved", "no"));
                 }
                 if segment.locked != u.segment.locked {
@@ -477,13 +580,14 @@ pub fn serialize_document(
                     cursor = u.opening.1;
                 }
                 output.push_str(&original[cursor..start]);
-                let state = match segment.state {
-                    SegmentState::Confirmed => "translated",
-                    SegmentState::Draft => "needs-review-translation",
+                let state = if confirmed {
+                    "translated"
+                } else {
+                    "needs-review-translation"
                 };
-                let state_changed = changed || segment.state != u.segment.state;
+                let state_changed = changed || segments.iter().any(|s| s.state != u.segment.state);
                 let state_attributes = [("state", state)];
-                if u.target.is_some() && !state_changed {
+                if (u.target.is_some() || u.segmented.is_some()) && !state_changed {
                     output.push_str(&original[start..end]);
                     cursor = end;
                     continue;
@@ -492,18 +596,36 @@ pub fn serialize_document(
                 if u.target.is_some() {
                     let raw = &original[start..end];
                     let opening_end = xml_open_end(raw)?;
-                    output.push_str(&updated_opening(
-                        &raw[..opening_end],
-                        if state_changed {
-                            &state_attributes
-                        } else {
-                            &[]
-                        },
-                    )?);
+                    let mut attributes = if state_changed {
+                        state_attributes.to_vec()
+                    } else {
+                        Vec::new()
+                    };
+                    if u.segmented.as_ref().is_some_and(|s| s.from_source) {
+                        let mut reader = Reader::from_str(&raw[..opening_end]);
+                        if let Event::Start(opening) | Event::Empty(opening) =
+                            reader.read_event().map_err(invalid)?
+                        {
+                            for (key, value) in &u.target_context {
+                                if attr(&opening, key.as_bytes())?.is_none() {
+                                    attributes.push((key.as_str(), value.as_str()));
+                                }
+                            }
+                        }
+                    }
+                    output.push_str(&updated_opening(&raw[..opening_end], &attributes)?);
                 } else {
-                    output.push_str(&format!("<{} state=\"{}\">", u.target_name, state));
+                    output.push_str(&format!("<{} state=\"{}\"", u.target_name, state));
+                    for (key, value) in &u.target_context {
+                        output.push_str(&format!(" {key}=\"{}\"", escaped(value)?));
+                    }
+                    output.push('>');
                 }
-                output.push_str(&u.source_inline.render(target, &u.target_inline)?);
+                if let Some(segmented) = &u.segmented {
+                    output.push_str(&segmented.serialize(unit_targets, cancel)?);
+                } else {
+                    output.push_str(&u.source_inline.render(target, &u.target_inline)?);
+                }
                 output.push_str(&format!("</{}>", u.target_name));
                 cursor = end;
             }
@@ -511,8 +633,14 @@ pub fn serialize_document(
             let validated = xliff(&output, cancel)?;
             if validated
                 .iter()
+                .flat_map(|u| {
+                    u.segmented.as_ref().map_or_else(
+                        || vec![u.segment.clone()],
+                        |segmented| segmented.segments(&u.segment),
+                    )
+                })
                 .zip(targets)
-                .any(|(u, t)| &u.segment.target != t)
+                .any(|(segment, t)| &segment.target != t)
             {
                 return Err(invalid("validación del target exportado falló"));
             }

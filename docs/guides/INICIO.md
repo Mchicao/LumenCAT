@@ -36,7 +36,9 @@ CR/LF/TAB no se convierten silenciosamente a espacios en Word: export rechazado.
 
 ## Límites y recuperación
 
-TXT UTF-8, líneas como segmentos y terminadores preservados. XLIFF 1.2 admite grupos anidados `g`/`mrk` y códigos `x`, `ph`, `bpt`, `ept`, `it`, `bx` y `ex`: el editor los representa como `<g id="N">`/`<x id="N"/>` y la exportación recupera sus atributos y contenido nativo. Confirmar exige conservar los códigos y el balance de grupos; exportar también verifica los pares nativos. No aprende esos segmentos en la memoria de escritura. `seg-source`, `sub`, extensiones inline y SDLXLIFF/paquetes siguen pendientes; construcciones ambiguas se rechazan sin aplanarlas.
+TXT UTF-8, líneas como segmentos y terminadores preservados. XLIFF 1.2 admite grupos anidados `g`/`mrk` y códigos `x`, `ph`, `bpt`, `ept`, `it`, `bx` y `ex`: el editor los representa como `<g id="N">`/`<x id="N"/>` y la exportación recupera sus atributos y contenido nativo. Confirmar exige conservar los códigos y el balance de grupos; exportar también verifica los pares nativos. No aprende esos segmentos en la memoria de escritura.
+
+En XLIFF segmentado, cada `mrk mtype="seg"` de `seg-source` crea una fila. Los destinos se correlacionan por `mid`, o por posición si todos carecen de identificador. XLIFF 1.2 guarda estado y bloqueo por unidad: una fila borrador rebaja el estado exportado de toda la unidad; iguala el bloqueo de sus filas antes de exportar. Destinos parciales/ambiguos, pares nativos entre filas, `sub`, extensiones inline y SDLXLIFF/paquetes siguen pendientes y se rechazan sin aplanarlos.
 
 TMX 1.4/1.4b UTF-8 admite texto y códigos `bpt`/`ept`, `ph`, `it`, `hi` y `ut`, conservando el contenido nativo, metadata TU y variantes originales. El atributo `x` empareja códigos entre idiomas; sin `x`, los pares usan `i` y otros códigos su orden. Los códigos propios de un idioma se conservan sin inventarlos en otro. Pares incoherentes y `sub` se rechazan; la importación del proyecto revierte entera ante error. El header de exportación lo genera LumenCAT; el original completo aún no se almacena. Idiomas y textos raw no se normalizan al guardar, NFC solo auxiliar.
 

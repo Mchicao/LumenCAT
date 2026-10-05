@@ -13,13 +13,16 @@ Encargo del usuario: implementar lo necesario, trabajar principalmente en `main`
 - [XLIFF con códigos](../technical/XLIFF_INLINE_20261005.md): conservar etiquetas nativas sobre el original y reutilizar los códigos protegidos del editor.
 - [TMX con códigos](../technical/TMX_INLINE_20261005.md): conservar unidades, propiedades y variantes; permitir formato específico de cada idioma sin inventar etiquetas en otro.
 - [SDLTM mediante SDK](../technical/SDLTM_SDK_20261005.md): puente opcional, explícito, sobre instantáneas/copia nueva; requiere instalación de Trados y no redistribuye sus DLL. No sustituye al futuro lector sin SDK.
+- [XLIFF 1.2 segmentado](../technical/XLIFF_SEGMENTADO_20261005.md): filas por marcador, correlación por `mid` o posición, estado conservador por unidad y conservación del envelope.
+- [Motor documental SDK investigado](../technical/TRADOS_DOCUMENT_ENGINE_FUENTES.md): probe standalone TXT/DOCX ida/vuelta y extracción PDF; vía viable para un puente opcional, **todavía no integrada**. 51 definiciones detectadas no acreditan 51 formatos compatibles.
 
 ## Entregas y estado
 
 | Entrega | Estado probado | Falta para cerrar su alcance |
 |---|---|---|
 | GPUI Kit, cinta, temas, Archivo/cierre | Publicado `efb5c85`; núcleo y GUI de su build documentados | No implica nuevos formatos; la instancia del usuario conserva esa build |
-| XLIFF 1.2 con inline | Publicado `04b10f7`; núcleo/artefactos sintéticos | GUI/consumidor externo de nuevos códigos; segmentación y extensiones |
+| XLIFF 1.2 con inline | Publicado `04b10f7`; núcleo/artefactos sintéticos | GUI/Trados de nuevos códigos; extensiones |
+| XLIFF 1.2 segmentado | CORE+XML PASS; 7 pruebas, persistencia, exportación y XSD estricto OASIS | GUI/Trados, destinos parciales, pares entre filas y dialectos |
 | TMX con códigos/metadatos TU | Publicado `f5fbb7d`; núcleo/artefactos, ampliado con fixture del SDK | UTF-16, `sub`, cabecera original y aprendizaje de códigos |
 | Importar/actualizar copia SDLTM | CORE+SDK PASS; 43→44 TUs, corrección, índices exact/fuzzy y originales intactos | GUI, más fixtures/versiones y funcionamiento sin SDK |
 
@@ -27,7 +30,7 @@ No combinar pruebas de builds distintas como si acreditasen una única build fin
 
 ## Frontera de trabajo
 
-1. **Bilingües:** completar XLIFF 1.2 segmentado (`seg-source`, `mrk mtype="seg"`), `sub`, pares superpuestos; XLIFF 2.0; SDLXLIFF y otros dialectos con sus estados/skeleton, separando edición de generación nativa.
+1. **Bilingües:** ampliar XLIFF 1.2 segmentado a destinos parciales y pares entre filas, `sub`, pares superpuestos; XLIFF 2.0; SDLXLIFF y otros dialectos con sus estados/skeleton, separando edición de generación nativa.
 2. **Memorias:** lectura SDLTM sin SDK; importación/edición/aprendizaje de códigos; actualización de variantes y fidelidad TMX completa; legados TMW/MDB/Workbench con motores/conversión verificables.
 3. **Oficina:** ampliar DOCX (historias, campos, enlaces, revisiones, controles y variantes); XLSX/PPTX/ODF/Visio con conservación por partes y consumidor independiente.
 4. **Texto/web/software:** JSON, CSV/TAB, XML/perfiles/RESX, PO/properties, SRT/VTT y otros subtítulos; HTML, Markdown, YAML, correo y recursos .NET según los contratos del inventario.

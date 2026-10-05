@@ -3,6 +3,7 @@ pub mod docx;
 pub(crate) mod inline;
 pub mod sdltm;
 mod segmented;
+mod tmx_encoding;
 
 use crate::model::*;
 use quick_xml::{Reader, Writer, events::Event};
@@ -71,6 +72,9 @@ fn text_event(event: &Event<'_>) -> Result<Option<String>> {
     Ok(text)
 }
 fn check_decl(event: &Event<'_>) -> Result<()> {
+    check_decl_encoding(event, &[b"utf-8"])
+}
+fn check_decl_encoding(event: &Event<'_>, encodings: &[&[u8]]) -> Result<()> {
     match event {
         Event::DocType(_) => return Err(invalid("DTD y entidades externas no permitidos")),
         Event::Decl(d) => {
@@ -79,8 +83,13 @@ fn check_decl(event: &Event<'_>) -> Result<()> {
             }
             if let Some(enc) = d.encoding() {
                 let enc = enc.map_err(invalid)?;
-                if !enc.eq_ignore_ascii_case(b"utf-8") {
-                    return Err(invalid("solo XML UTF-8 está soportado"));
+                if !encodings
+                    .iter()
+                    .any(|allowed| enc.eq_ignore_ascii_case(allowed))
+                {
+                    return Err(invalid(
+                        "codificación XML declarada no coincide con los bytes; use UTF-8 o TMX UTF-16 con BOM",
+                    ));
                 }
             }
         }
@@ -779,8 +788,11 @@ pub fn import_tmx<R: BufRead>(
     cancel: &Cancellation,
     mut sink: impl FnMut(TmUnit) -> Result<()>,
 ) -> Result<usize> {
+    cancel.check()?;
+    let input = tmx_encoding::Input::new(reader)?;
+    let encoding = input.encoding;
     let mut reader = Reader::from_reader(EventInput {
-        inner: reader,
+        inner: std::io::BufReader::new(input),
         remaining: MAX_TU,
     });
     let mut buffer = Vec::new();
@@ -795,7 +807,7 @@ pub fn import_tmx<R: BufRead>(
         buffer.clear();
         reader.get_mut().remaining = MAX_TU;
         let event = reader.read_event_into(&mut buffer).map_err(invalid)?;
-        check_decl(&event)?;
+        check_decl_encoding(&event, encoding.declarations())?;
         let _ = text_event(&event)?;
         match &event {
             Event::Start(s) | Event::Empty(s) => {

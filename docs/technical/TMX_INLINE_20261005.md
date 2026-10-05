@@ -2,7 +2,7 @@
 
 Estado: núcleo verificado con fixtures sintéticas. GUI y lectura/reimportación en Trados todavía no ejecutadas. No acredita actualización directa de SDLTM ni paridad completa de memorias.
 
-Actualización posterior: [SDLTM mediante SDK](SDLTM_SDK_20261005.md) acredita consumo por el motor Trados de las unidades TMX de su muestra y una actualización/corrección sintética. Sigue sin acreditar GUI ni compatibilidad universal.
+Actualización posterior: [TMX con códigos](TMX_INLINE_20261005.md) → [SDLTM mediante SDK](SDLTM_SDK_20261005.md) → [TMX UTF-16](TMX_UTF16_20261005.md). La lectura cubre ahora UTF-16 con BOM en ambos endianess, acreditada también contra el motor de Trados; sigue sin acreditar GUI.
 
 ## Alcance del corte
 
@@ -22,6 +22,6 @@ La prueba positiva falló contra el código anterior por rechazo de inline (`log
 
 ## Pendiente
 
-`sub`, pares superpuestos, UTF-16, cabecera original completa, aprendizaje/edición de unidades con códigos, SDLTM sin SDK y formatos legados. La salida de TMX sigue siendo un archivo nuevo, no una sobrescritura de la memoria original. El ejecutable que está probando el usuario no se reemplaza.
+`sub`, pares superpuestos, cabecera original completa, aprendizaje/edición de unidades con códigos, SDLTM sin SDK y formatos legados (UTF-16 resuelto en su propio corte). La salida de TMX sigue siendo un archivo nuevo, no una sobrescritura de la memoria original. El ejecutable que está probando el usuario no se reemplaza.
 
 Fuente normativa y API de referencia: [investigación de memorias Trados](PARIDAD_MEMORIAS_TRADOS_FUENTES.md), sección TMX y referencias RWS/LISA. La evidencia propia de este corte se limita al núcleo y a archivos sintéticos.

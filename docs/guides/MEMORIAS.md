@@ -28,7 +28,7 @@ Un autosave en vuelo no descarta la intención de confirmar. La interfaz espera 
 
 ## Límites del corte
 
-- Aprendizaje de texto plano; DOCX y XLIFF con códigos se validan al confirmar, pero no se aprenden todavía. Las unidades TMX importadas sí admiten códigos `bpt`/`ept`, `ph`, `it`, `hi` y `ut`; importación, búsquedas y exportación conservan sus códigos nativos, propiedades TU y otras variantes lingüísticas. `sub`, UTF-16 y la cabecera original completa siguen pendientes.
+- Aprendizaje de texto plano; DOCX y XLIFF con códigos se validan al confirmar, pero no se aprenden todavía. Las unidades TMX importadas sí admiten códigos `bpt`/`ept`, `ph`, `it`, `hi` y `ut`; importación, búsquedas y exportación conservan sus códigos nativos, propiedades TU y otras variantes lingüísticas. La importación acepta UTF-8 y UTF-16 con BOM (little/big endian); la exportación emite UTF-8. `sub` y la cabecera original completa siguen pendientes.
 - Confirmar vacío o bloqueado se rechaza. Una importación de estado `Confirmed`, un lock o un undo no se interpreta como intención humana de aprender.
 - La búsqueda agrupa destinos equivalentes y conserva las unidades en almacenamiento. La presentación completa de procedencias agregadas, prioridades, penalizaciones y coincidencias de contexto está pendiente.
 - GPUI es la única interfaz y usa el comando transaccional de confirmación para todas las colecciones.

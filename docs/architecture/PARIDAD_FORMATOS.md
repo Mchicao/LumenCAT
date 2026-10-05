@@ -13,6 +13,7 @@ Encargo del usuario: implementar lo necesario, trabajar principalmente en `main`
 - [XLIFF con códigos](../technical/XLIFF_INLINE_20261005.md): conservar etiquetas nativas sobre el original y reutilizar los códigos protegidos del editor.
 - [TMX con códigos](../technical/TMX_INLINE_20261005.md): conservar unidades, propiedades y variantes; permitir formato específico de cada idioma sin inventar etiquetas en otro.
 - [SDLTM mediante SDK](../technical/SDLTM_SDK_20261005.md): puente opcional, explícito, sobre instantáneas/copia nueva; requiere instalación de Trados y no redistribuye sus DLL. No sustituye al futuro lector sin SDK.
+- [Lectura SDLTM nativa](../technical/SDLTM_NATIVE_20261005.md): importar `.sdltm` de solo lectura sin Trados, con puerta estructural de esquema (motores 8.10 y 19.0 verificados), mapeo Segment→TMX del dialecto SDL y rechazo explícito de variantes no modelables. La actualización sigue requiriendo el SDK.
 - [XLIFF 1.2 segmentado](../technical/XLIFF_SEGMENTADO_20261005.md): filas por marcador, correlación por `mid` o posición, estado conservador por unidad y conservación del envelope.
 - [TMX UTF-16](../technical/TMX_UTF16_20261005.md): memorias con BOM LE/BE decodificadas por flujo, validadas contra el motor de Trados; exportación UTF-8.
 - [Motor documental SDK investigado](../technical/TRADOS_DOCUMENT_ENGINE_FUENTES.md): probe standalone TXT/DOCX ida/vuelta y extracción PDF; vía viable para un puente opcional, **todavía no integrada**. 51 definiciones detectadas no acreditan 51 formatos compatibles.
@@ -27,6 +28,7 @@ Encargo del usuario: implementar lo necesario, trabajar principalmente en `main`
 | TMX UTF-16 | CORE+SDK PASS; LE/BE con BOM, sustitutos y actualización SDLTM 43→44 con unidad Unicode recuperada | GUI, UTF-16 sin BOM y otras codificaciones |
 | TMX con códigos/metadatos TU | Publicado `f5fbb7d`; núcleo/artefactos, ampliado con fixture del SDK | UTF-16, `sub`, cabecera original y aprendizaje de códigos |
 | Importar/actualizar copia SDLTM | CORE+SDK PASS; 43→44 TUs, corrección, índices exact/fuzzy y originales intactos | GUI, más fixtures/versiones y funcionamiento sin SDK |
+| Lectura SDLTM sin SDK | CORE PASS; fixtures 8.10 y 19.0 (43 TUs c/u, fuentes idénticas), códigos y campos de sistema mapeados, round-trip TMX, original intacto | GUI; variantes de Tag no modeladas (LockedContent, TextPlaceholder), esquemas futuros y actualización sin SDK |
 
 No combinar pruebas de builds distintas como si acreditasen una única build final. Tests del núcleo no prueban GUI; consumir una fixture mediante SDK no prueba todos los filtros de Trados.
 

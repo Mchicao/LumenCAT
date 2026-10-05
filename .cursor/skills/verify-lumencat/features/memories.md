@@ -2,7 +2,7 @@
 
 - `memories.tm-tab-apply`: pestaña **TM MATCHES** del panel derecho con coincidencias exactas/fuzzy del segmento activo e inserción explícita (**Apply Match** / `tm-apply-N`, Ctrl+T o Ctrl+1..9).
 - `memories.tmx-import`: importar TMX 1.4/1.4b con códigos desde **Avanzado → Importar memoria** (también en Archivo); termina con «TM importada: N unidades».
-- `memories.sdltm-import` / `memories.sdltm-update-copy`: importar SDLTM mediante copia privada y generar una copia actualizada desde **Avanzado → Actualizar SDLTM (copia, requiere Trados)**. Requiere Studio instalado; no sobrescribe originales ni destinos existentes. GUI de este corte todavía NOT RUN; CORE+SDK verificados por separado.
+- `memories.sdltm-import` / `memories.sdltm-update-copy`: importar SDLTM (con Trados instalado usa su SDK sobre copia privada; sin Trados, lector nativo de solo lectura) y generar una copia actualizada desde **Avanzado → Actualizar SDLTM (copia, requiere Trados)**. La actualización exige Studio instalado; no se sobrescriben originales ni destinos existentes. GUI de ambos cortes todavía NOT RUN; CORE verificado (nativo contra fixtures 8.10 y 19.0) y CORE+SDK por separado.
 - `memories.tmx-export`: exportar las unidades del proyecto a TMX nueva desde **Avanzado → Exportar TMX** (también en Archivo); validar el XML resultante.
 - `memories.concordance-query`: concordancia sobre la memoria (botón **Concordancia** / F3) con resultados en la pestaña TM.
 - `memories.create`: crear colecciones y elegir memoria de escritura compatible con el par del documento.
@@ -11,7 +11,7 @@
 
 ## How to get to it (user POV)
 
-**Importar memoria**: pulsa **Avanzado → Importar memoria**. **Memorias del proyecto** (`memory-menu`) muestra el gestor de colecciones en el lateral. Importar abre diálogo `.tmx`/`.sdltm`; la barra informa «TM importada: N unidades». Los recursos viven dentro del `.lcat`, para el par del documento activo. SDLTM usa SDK de Trados sobre una copia SQLite consistente; configura el par exacto declarado, incluidas regiones.
+**Importar memoria**: pulsa **Avanzado → Importar memoria**. **Memorias del proyecto** (`memory-menu`) muestra el gestor de colecciones en el lateral. Importar abre diálogo `.tmx`/`.sdltm`; la barra informa «TM importada: N unidades». Los recursos viven dentro del `.lcat`, para el par del documento activo. SDLTM se lee en modo de solo lectura: con Trados usa su SDK sobre una copia SQLite consistente y sin Trados el lector nativo; configura el par exacto declarado, incluidas regiones.
 
 **Aprender**: escribe «Nombre de memoria», pulsa **Crear memoria** y **Usar para aprender** en la colección compatible. Confirma una traducción y selecciona una repetición: debe ofrecerla con colección/procedencia. La memoria inicial puede requerir selección explícita. **Desactivar aprendizaje**, **Pasar a solo lectura** y **Excluir de búsquedas** no borran unidades; exportar incluye unidades activas incluso de colecciones excluidas. Véase [MEMORIAS](../../../../docs/guides/MEMORIAS.md).
 

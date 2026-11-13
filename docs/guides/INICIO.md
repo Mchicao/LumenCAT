@@ -6,27 +6,27 @@ Primer slice funcional en desarrollo; no sustituye todavía una herramienta CAT 
 
 Desde `C:/Proyectos/LumenCAT`, `cargo run --locked --release --bin lumencat`. El ejecutable standalone está en `output/lumencat.exe` cuando se publica la build local. Se puede ejecutar desde cualquier directorio. Opcional: `lumencat.exe --project C:/ruta/proyecto.db`. No se requiere Rust para ejecutar ese EXE en Windows compatible, pero no hay instalador firmado ni distribución verificada en otra máquina.
 
-## Interfaz GPUI (predeterminada)
+## Interfaz GPUI
 
-`cargo run --locked` abre GPUI. Para la interfaz anterior: `cargo run --locked -- --legacy-egui`. Ambas aceptan `--project C:/ruta/proyecto.lcat`.
+`cargo run --locked` abre la aplicación GPUI. Acepta `--project C:/ruta/proyecto.db`.
 
 - Abre/crea un proyecto, importa documentos con los botones del encabezado y selecciona un documento en la barra lateral. Los proyectos nuevos GPUI usan en→es; los documentos existentes conservan su par.
 - Clic en una fila o ↑/↓ para navegar; el destino recibe foco. La fila activa se mantiene visible. Ctrl+Enter confirma y avanza, Alt+C copia el origen y Ctrl+L bloquea/desbloquea.
 - Ctrl+, o Ctrl+Alt+flecha inserta la siguiente etiqueta `<g>`, `</g>` o `<x/>` que falta. Los badges son representación del texto; no amplían el subset XLIFF/DOCX del importador.
 - Ctrl+F busca en origen/destino, con alcance de segmento o documento. Ctrl+H abre reemplazo literal, sensible a mayúsculas, solo en destinos. El reemplazo de documento es transaccional, ignora segmentos bloqueados y conserva tags. Ctrl+Z/Y deshace/rehace cada segmento del historial.
 - El progreso cuenta destinos no vacíos en todo el documento; no equivale a confirmación ni QA aprobada. Clic en la barra va al primer pendiente cargado. El editor muestra palabras, caracteres Unicode y margen en bytes del límite UTF-8 de 1 MiB. El porcentaje TM aplicado se muestra durante la sesión; no se persiste como metadata.
-- Autoguardado periódico sin otra pulsación. El cierre espera el commit y el cierre del worker; un error impide cerrar para conservar el borrador. La recuperación TXT mediante diálogo pertenece a la interfaz anterior.
+- Autoguardado periódico sin otra pulsación. El cierre espera el commit y el cierre del worker; un error impide cerrar para conservar el borrador.
 
 GPUI aún no virtualiza el grid completo ni tiene navegación de cursor con clic/selección parcial por ratón. El puente de entrada nativa está conectado; no se afirma validación completa de IME, RTL o accesibilidad. La tabla bilingüe representa segmentos, no el diseño visual de Word.
 
-## Flujo de la interfaz anterior
+## Flujo de trabajo
 
 1. En Proyecto indica ruta nueva `.db` o existente y abre/crea. La carpeta debe existir. No usar carpetas de sincronización activa ni aliases/hardlinks para SQLite: esta versión no valida todos los escenarios de sync/FS; WAL y DB deben permanecer juntos.
 2. Define idiomas de importación (`en` / `es`, etc.). En Archivo indica TXT, XLF/XLIFF o DOCX soportado y pulsa importar. Selecciona documento y segmento.
-3. Edita target; se guarda transaccionalmente a los 250 ms de pausa o máximo 500 ms de escritura continua, más cola/tiempo de commit. El footer distingue pendiente de guardado. Confirmar con Ctrl+Enter; Alt+flechas navega. Copiar fuente/insertar match son acciones explícitas. Cambiar texto invalida confirmación, lock solo cambia bloqueo.
+3. Edita target; se guarda transaccionalmente con autoguardado periódico más cola/tiempo de commit. Confirmar con Ctrl+Enter; ↑/↓ navega. Copiar fuente/insertar match son acciones explícitas. Cambiar texto invalida confirmación, lock solo cambia bloqueo.
 4. TMX se importa para el par indicado; TM no recibe automáticamente tus traducciones. Matches exact/fuzzy y concordancia locales. Fuzzy es aproximado, el porcentaje mide Levenshtein sobre clave NFC; no es context match ni garantía exhaustiva.
-5. Busca en fuente/target; resultados por lotes de 128, siguiente lote explícito, operación cancelable. Undo/redo por Ctrl+Z/Y persiste historial; con texto pendiente debes esperar commit y repetir. QA muestra advertencias locales, no corrige traducción.
-6. Exporta indicando nombre NUEVO con extensión del formato original. El destino y la fuente no se sobrescriben. Si falla el exporte, no se publica un archivo parcial. Cerrar espera commit; si guardar falla, conserva el borrador y ofrece recuperación TXT a nombre nuevo o descarte explícito.
+5. Busca en fuente/target; resultados por lotes de 128, siguiente lote explícito, operación cancelable. Undo/redo por Ctrl+Z/Y persiste historial. QA muestra advertencias locales, no corrige traducción.
+6. Exporta indicando nombre NUEVO con extensión del formato original. El destino y la fuente no se sobrescriben. Si falla el exporte, no se publica un archivo parcial. Cerrar espera commit; si guardar falla, conserva el borrador.
 
 ## DOCX / Microsoft Word
 
@@ -38,7 +38,7 @@ CR/LF/TAB no se convierten silenciosamente a espacios en Word: export rechazado.
 
 TXT UTF-8, líneas como segmentos y terminadores preservados; XLIFF 1.2 textual sin códigos inline ni seg-source; SDLXLIFF/paquetes no soportados. TMX textual: códigos inline rechazados; metadata TU y variantes originales conservadas, header de export generado por LumenCAT (header original completo aún no almacenado). Idiomas y textos raw no normalizados al guardar, NFC solo auxiliar.
 
-Límite persistido source/target 1 MiB por segmento; documentos generales 256 MiB, DOCX 128 MiB y partes 32 MiB/2048 entradas. Import/export de documentos actualmente usa buffer completo fuera UI, no streaming universal: ver benchmarks y memoria pendiente. La interfaz anterior conserva máximo 1024 filas más segmento activo; GPUI actualmente carga el documento completo; TM vive en SQLite.
+Límite persistido source/target 1 MiB por segmento; documentos generales 256 MiB, DOCX 128 MiB y partes 32 MiB/2048 entradas. Import/export de documentos actualmente usa buffer completo fuera UI, no streaming universal: ver benchmarks y memoria pendiente. GPUI actualmente carga el documento completo; TM vive en SQLite.
 
 Un cierre abrupto activa recuperación SQLite y aviso. Los commits confirmados son durables dentro de garantías del SO/dispositivo; puede perderse texto aún pendiente o fallar hardware. Si la integridad falla, se rechaza edición: conservar DB/WAL/SHM y restaurar respaldo. No hay reparador de corrupción ni backups automáticos todavía; no copiar solo DB durante sesión activa.
 
